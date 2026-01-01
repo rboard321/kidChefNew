@@ -1,0 +1,10 @@
+{
+  "projects": {
+    "default": "kidchef-dev",
+    "development": "kidchef-dev",
+    "staging": "kidchef-staging",
+    "production": "kidchef"
+  },
+  "targets": {},
+  "etags": {}
+}

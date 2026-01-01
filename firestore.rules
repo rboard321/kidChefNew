@@ -1,0 +1,363 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isParentOfKid(kidId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/kidProfiles/$(kidId)) &&
+        isOwnerOfParentProfile(get(/databases/$(database)/documents/kidProfiles/$(kidId)).data.parentId);
+    }
+
+    function isOwnerOfParentProfile(parentId) {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/parentProfiles/$(parentId)) &&
+        get(/databases/$(database)/documents/parentProfiles/$(parentId)).data.userId == request.auth.uid;
+    }
+
+    // Legacy User Profiles (for backward compatibility during migration)
+    match /userProfiles/{userId} {
+      allow read, write: if isOwner(userId);
+      allow create: if isAuthenticated() && userId == request.auth.uid;
+      // Temporary: Allow querying during migration only
+      allow list: if isAuthenticated();
+    }
+
+    // Parent Profiles - only the authenticated user can access their own profile
+    match /parentProfiles/{parentId} {
+      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      // Allow listing for queries; read rules still enforce ownership
+      allow list: if isAuthenticated();
+    }
+
+
+    // Kid Profiles - only the parent can manage their kids
+    match /kidProfiles/{kidId} {
+      allow read, write: if isAuthenticated() && (
+        // Parent can access their own kid's profile
+        isOwnerOfParentProfile(resource.data.parentId) ||
+        // For creation, check the parent ID in the request
+        (request.resource != null && isOwnerOfParentProfile(request.resource.data.parentId))
+      );
+      allow create: if isAuthenticated() &&
+        isOwnerOfParentProfile(request.resource.data.parentId);
+      allow list: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
+    }
+
+    // Recipes - only owners can manage their recipes (parentId-only, clean security)
+    match /recipes/{recipeId} {
+<<<<<<< HEAD
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner(resource.data.userId);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
+      allow list: if isAuthenticated();
+    }
+
+    // Kid-friendly recipes - only owner access
+    match /kidRecipes/{kidRecipeId} {
+      allow read, write: if isAuthenticated() &&
+        resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      allow list: if isAuthenticated();
+    }
+
+    // Global kid-friendly recipe cache - read-only for users, Cloud Functions manage writes
+    match /kidRecipeCache/{cacheId} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only Cloud Functions should manage cache
+      allow create: if false; // Only Cloud Functions should create cache entries
+=======
+      allow read: if isAuthenticated() && (
+        // Owner via parentId (required - clean security)
+        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
+      );
+      allow write: if isAuthenticated() && (
+        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
+      );
+      allow create: if isAuthenticated() && (
+        // New recipes MUST have parentId (enforced by flow guards)
+        request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
+      );
+      allow list: if isAuthenticated();
+    }
+
+    // Kid-friendly recipes - only parent can access their kids' recipes (parentId-based only)
+    match /kidRecipes/{kidRecipeId} {
+      allow read: if isAuthenticated() && (
+        // Parent can access via parentId (required - no legacy fallback)
+        (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)) ||
+        // Allow querying by kidId if user is parent of that kid
+        (resource.data.kidId != null && isParentOfKid(resource.data.kidId))
+      );
+      allow create: if isAuthenticated() && (
+        // New kidRecipes must use parentId (required - no legacy fallback)
+        request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)
+      );
+      allow update: if isAuthenticated() && (
+        // Parent can update via parentId - check both existing and new data
+        (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)) &&
+        (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId))
+      );
+      allow delete: if isAuthenticated() && (
+        // Parent can delete via parentId (required - no legacy fallback)
+        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
+      );
+      allow list: if isAuthenticated();
+    }
+
+    // Global kid-friendly recipe cache - authenticated users can cache their own conversions
+    match /kidRecipeCache/{cacheId} {
+      allow read: if isAuthenticated();
+      // Allow authenticated users to cache their own recipe conversions for performance (parentId-based only)
+      allow write, create: if isAuthenticated() && (
+        // Check that the cache entry belongs to the authenticated user (required - no legacy fallback)
+        request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)
+      );
+>>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
+    }
+
+    // Cooking Sessions - only for kid's parent
+    match /cookingSessions/{sessionId} {
+      allow read, write, create: if isAuthenticated() &&
+        isParentOfKid(resource.data.kidId || request.resource.data.kidId);
+      allow list: if isAuthenticated() &&
+        isParentOfKid(resource.data.kidId);
+    }
+
+    // Family Meals - only for family members
+    match /familyMeals/{mealId} {
+      allow read, write: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
+      allow create: if isAuthenticated() &&
+        isOwnerOfParentProfile(request.resource.data.parentId);
+      allow list: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
+    }
+
+    // Recipe Recommendations - read-only for authenticated users
+    match /recipeRecommendations/{recommendationId} {
+      allow read: if isAuthenticated();
+      allow write: if false; // Only Cloud Functions should write recommendations
+    }
+
+    // Recipe sharing (sharedRecipes collection) - proper ownership validation
+    match /sharedRecipes/{shareId} {
+      allow read: if isAuthenticated() && (
+        // Parent can read recipes shared with their kids
+        (resource.data.kidId != null && isParentOfKid(resource.data.kidId)) ||
+        // Parent can read recipes they shared
+        (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId))
+      );
+<<<<<<< HEAD
+      allow write: if isAuthenticated() && (
+        (resource.data.kidId != null && isParentOfKid(resource.data.kidId)) ||
+        (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId))
+      );
+      allow create: if isAuthenticated() && (
+        (request.resource.data.kidId != null && isParentOfKid(request.resource.data.kidId)) ||
+        (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId))
+      );
+      allow list: if isAuthenticated();
+=======
+
+      // Allow create - check the request data for new documents
+      allow create: if isAuthenticated() && (
+        // Parent creating their own shared recipe
+        request.resource.data.parentUserId == request.auth.uid
+      );
+
+      // Allow update - check both existing and new data
+      allow update: if isAuthenticated() && (
+        // Original document belongs to user and new document still belongs to user
+        resource.data.parentUserId == request.auth.uid &&
+        request.resource.data.parentUserId == request.auth.uid
+      );
+
+      // Allow delete - check existing document ownership
+      allow delete: if isAuthenticated() && (
+        resource.data.parentUserId == request.auth.uid
+      );
+
+      // Allow list for queries - simplified since all queries now include parentUserId
+      allow list: if isAuthenticated() && (
+        resource.data.parentUserId == request.auth.uid
+      );
+>>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
+    }
+
+    // Kid recipe ratings - parents can rate kid recipes they have access to
+    match /kidRecipeRatings/{ratingId} {
+      allow read, write: if isAuthenticated() && (
+        // Parent who created the rating
+        isOwnerOfParentProfile(resource.data.parentId)
+      );
+      allow create: if isAuthenticated() && (
+        isOwnerOfParentProfile(request.resource.data.parentId)
+      );
+      allow list: if isAuthenticated() && (
+        isOwnerOfParentProfile(resource.data.parentId)
+      );
+    }
+
+    // Step reports - kids and parents can report issues with recipe steps
+    match /stepReports/{reportId} {
+      allow read, write: if isAuthenticated() && (
+        // Parent who created the report
+        isOwnerOfParentProfile(resource.data.parentId) ||
+        // Kid the recipe was for (via parent ownership)
+        isParentOfKid(resource.data.kidId)
+      );
+      allow create: if isAuthenticated() && (
+        isOwnerOfParentProfile(request.resource.data.parentId) ||
+        isParentOfKid(request.resource.data.kidId)
+      );
+      allow list: if isAuthenticated() && (
+        isOwnerOfParentProfile(resource.data.parentId) ||
+        isParentOfKid(resource.data.kidId)
+      );
+    }
+
+<<<<<<< HEAD
+    // Recipe import cache - accessible by authenticated users for caching recipe imports
+    match /recipeImportCache/{cacheId} {
+      allow read: if isAuthenticated();
+      allow write, create: if isAuthenticated(); // Allow users to cache their imports
+    }
+=======
+>>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
+
+    // Kid Progress tracking - only accessible by parents of the kid
+    match /kidProgress/{kidId} {
+      allow read, write: if isAuthenticated() && isParentOfKid(kidId);
+      allow create: if isAuthenticated() && isParentOfKid(kidId);
+      allow list: if isAuthenticated() && isParentOfKid(kidId);
+    }
+
+    // Rate limiting collection for tracking usage quotas
+    match /rateLimits/{userId} {
+      allow read, write: if isOwner(userId);
+      allow create: if isAuthenticated() && userId == request.auth.uid;
+    }
+
+    // COPPA Compliance: Parental Consent records
+    match /parentalConsents/{consentId} {
+      allow read, write: if isAuthenticated() && (
+        // Parent can access their own consent records
+        resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid
+      );
+      allow list: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid
+      );
+    }
+
+    // COPPA Compliance: Parental Notice records
+    match /parentalNotices/{noticeId} {
+      allow read, write: if isAuthenticated() && (
+        // Parent can access notices sent to them
+        resource.data.userId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && (
+        request.resource.data.userId == request.auth.uid
+      );
+      allow list: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid
+      );
+    }
+
+    // Recipe Favorites - parents can manage their own favorites and their kids' favorites
+    match /recipeFavorites/{favoriteId} {
+      // Allow read - handle both existing documents and non-existing documents
+      allow read: if isAuthenticated() && (
+        // If document doesn't exist, allow read for authenticated users to check
+        resource == null ||
+        // If document exists, check ownership
+        (resource != null && (
+          (resource.data.parentUserId != null && resource.data.parentUserId == request.auth.uid)
+        ))
+      );
+
+      // Allow write (covers both create and update) - check the request data
+      allow write: if isAuthenticated() && (
+        // Parent creating/updating their own favorite (no kidId)
+        request.resource.data.parentUserId == request.auth.uid
+      );
+
+      // Allow list for queries - only user's own favorites
+      allow list: if isAuthenticated() && (
+        resource.data.parentUserId == request.auth.uid
+      );
+    }
+
+    // Beta feedback collection - users can create feedback, only admins can read/update
+    match /betaFeedback/{feedbackId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update feedback for privacy
+      allow read, write: if false;
+    }
+
+    // Error Reports - users can create error reports, only admins/cloud functions can read
+    match /errorReports/{reportId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update error reports for privacy and security
+      allow read, write: if false;
+    }
+
+    // User Sessions - track user behavior and app usage patterns
+    match /userSessions/{sessionId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update sessions for analytics processing
+      allow read, write: if false;
+    }
+
+    // Performance Metrics - monitor app performance and crashes
+    match /performanceMetrics/{metricId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update performance data
+      allow read, write: if false;
+    }
+
+    // Feature Usage - track which features are used most/least
+    match /featureUsage/{usageId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update usage data for analytics
+      allow read, write: if false;
+    }
+
+    // Analytics Events - generic analytics event tracking
+    match /analyticsEvents/{eventId} {
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid;
+      // Only Cloud Functions can read/update events for processing
+      allow read, write: if false;
+    }
+
+    // Deny all other access
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
