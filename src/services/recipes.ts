@@ -17,11 +17,7 @@ import { cacheService } from './cacheService';
 import type { Recipe, KidRecipe } from '../types';
 
 export interface RecipeService {
-<<<<<<< HEAD
-  addRecipe: (userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>;
-=======
   addRecipe: (userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) => Promise<string>;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   updateRecipe: (recipeId: string, updates: Partial<Recipe>) => Promise<void>;
   deleteRecipe: (recipeId: string) => Promise<void>;
   getUserRecipes: (userId: string) => Promise<Recipe[]>;
@@ -31,21 +27,13 @@ export interface RecipeService {
 }
 
 export const recipeService: RecipeService = {
-<<<<<<< HEAD
-  async addRecipe(userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>) {
-=======
   async addRecipe(userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) {
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     try {
       const now = Timestamp.now();
       const recipeData: Omit<Recipe, 'id'> = {
         ...recipe,
-<<<<<<< HEAD
-        userId,
-=======
         userId, // Keep for backward compatibility
         parentId, // REQUIRED - always set for proper access control
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         createdAt: now,
         updatedAt: now,
       };
@@ -102,24 +90,6 @@ export const recipeService: RecipeService = {
     }
   },
 
-<<<<<<< HEAD
-  async getUserRecipes(userId: string): Promise<Recipe[]> {
-    try {
-      // Check cache first
-      const cached = cacheService.getRecipes(userId);
-      if (cached) {
-        console.log('Returning cached recipes for user:', userId);
-        return cached;
-      }
-
-      console.log('Cache miss - fetching recipes from Firestore for user:', userId);
-
-      // Simplified query without orderBy to avoid index requirement temporarily
-      const q = query(
-        collection(db, 'recipes'),
-        where('userId', '==', userId)
-      );
-=======
   async getUserRecipes(userId: string, parentId?: string, skipCache: boolean = false): Promise<Recipe[]> {
     try {
       const cacheKey = parentId || userId;
@@ -160,7 +130,6 @@ export const recipeService: RecipeService = {
           where('userId', '==', userId)
         );
       }
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
       const querySnapshot = await getDocs(q);
       const recipes: Recipe[] = [];

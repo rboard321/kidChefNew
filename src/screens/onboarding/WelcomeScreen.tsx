@@ -13,14 +13,10 @@ export default function WelcomeScreen() {
   const navigation = useNavigation();
 
   const handleGetStarted = () => {
-<<<<<<< HEAD
-    navigation.navigate('KidLevel' as never);
-=======
     navigation.reset({
       index: 0,
       routes: [{ name: 'ParentSettings' as never }],
     } as never);
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   };
 
   return (

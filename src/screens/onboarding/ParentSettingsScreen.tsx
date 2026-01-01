@@ -8,13 +8,8 @@ import {
   TextInput,
   Alert,
   ScrollView,
-<<<<<<< HEAD
-  TouchableWithoutFeedback,
-  Keyboard,
-=======
   KeyboardAvoidingView,
   Platform,
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -62,9 +57,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
   const [enableVoiceInstructions, setEnableVoiceInstructions] = useState(false);
   const [loading, setLoading] = useState(false);
 
-<<<<<<< HEAD
-  const handleComplete = async () => {
-=======
   useEffect(() => {
     console.log('👨‍👩‍👧‍👦 ParentSettingsScreen mounted');
     console.log('Input states:', { parentName, familyName });
@@ -90,7 +82,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
       familyNameLength: familyName.length
     });
 
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     if (!parentName.trim() || !familyName.trim()) {
       console.log('❌ Validation failed - missing required fields');
       Alert.alert('Missing Information', 'Please fill in all required fields.');
@@ -117,44 +108,17 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
         theme: 'light',
       };
 
-<<<<<<< HEAD
-      const parentId = await parentProfileService.createParentProfile(user.uid, {
-=======
       const profileData = {
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         familyName: familyName.trim(),
         parentName: parentName.trim(),
         email: user.email || '',
         settings: userSettings,
-<<<<<<< HEAD
-      });
-
-      const kidAge = kidData?.age || 8;
-      const kidProfileId = await kidProfileService.createKidProfile(parentId, {
-        name: kidData?.name || 'My Kid',
-        age: kidAge,
-        readingLevel: kidData?.readingLevel || 'beginner',
-        allergyFlags: [],
-        permissions: {
-          canViewIngredients: true,
-          canUseKnives: kidAge >= 10,
-          canUseStove: kidAge >= 12,
-          canUseOven: kidAge >= 14,
-          requiresAdultHelp: kidAge < 8,
-          maxCookingTimeMinutes: Math.min(60, Math.max(15, kidAge * 5)),
-        },
-        avatarEmoji: '👶',
-      });
-
-      await parentProfileService.addKidToParent(parentId, kidProfileId);
-=======
       };
 
       console.log('📝 About to create parent profile with data:', profileData);
       console.log('📝 User UID:', user.uid);
 
       await parentProfileService.createParentProfile(user.uid, profileData);
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
       await refreshProfile();
       return true;
     } catch (error) {
@@ -218,13 +182,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
   }
   return (
     <SafeAreaView style={styles.container}>
-<<<<<<< HEAD
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Parent Settings</Text>
-        <Text style={styles.subtitle}>
-          Tell us about yourself and customize how recipes are presented to {kidData?.name || 'your child'}
-=======
         <KeyboardAvoidingView
           style={styles.keyboardContainer}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -239,7 +196,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
         <Text style={styles.title}>Complete Your Profile</Text>
         <Text style={styles.subtitle}>
           Let's set up your profile and customize how recipes are presented to your family. This information helps us provide age-appropriate content for your children.
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         </Text>
 
         <View style={styles.inputContainer}>
@@ -374,11 +330,7 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
           </Text>
         </TouchableOpacity>
         </ScrollView>
-<<<<<<< HEAD
-      </TouchableWithoutFeedback>
-=======
         </KeyboardAvoidingView>
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     </SafeAreaView>
   );
 }

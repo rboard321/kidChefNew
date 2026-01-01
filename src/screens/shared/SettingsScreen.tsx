@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,8 @@ import {
   TouchableOpacity,
   Switch,
   ScrollView,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useAuth } from '../../contexts/AuthContext';
-import { PinChangeModal } from '../../components/PinChangeModal';
 
 export default function SettingsScreen() {
   const [safetyNotes, setSafetyNotes] = useState(true);
@@ -18,103 +15,6 @@ export default function SettingsScreen() {
   const [autoSimplify, setAutoSimplify] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
-
-  const { user, parentProfile, changePIN, signOut } = useAuth();
-<<<<<<< HEAD
-=======
-  const envInfo = getEnvironmentInfo();
-
-  // Debug modal states disabled to prevent render loop
-  // useEffect(() => {
-  //   console.log('🔍 Settings Screen Modal States:', {
-  //     showPinChangeModal,
-  //     showBugReportModal,
-  //     showEnvironmentDebug,
-  //     timestamp: new Date().toISOString()
-  //   });
-  // }, [showPinChangeModal, showBugReportModal, showEnvironmentDebug]);
-
-  // Enable shake-to-report functionality - disabled for debugging
-  // useShakeToReport(() => {
-  //   setShowBugReportModal(true);
-  // }, true);
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
-
-  const handleSignOut = () => {
-    console.log('🚪 Sign out button pressed');
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              console.log('🚪 Starting sign out process...');
-              await signOut();
-              console.log('✅ Sign out successful');
-            } catch (error) {
-              console.error('❌ Sign out error:', error);
-              Alert.alert('Error', 'Failed to sign out. Please try again.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleClearStorage = () => {
-    Alert.alert(
-      'Clear Local Storage',
-      'This will force log you out and clear all cached data. Use this if sign out is not working.',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Clear Storage',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-              await AsyncStorage.clear();
-              console.log('🧹 AsyncStorage cleared');
-              Alert.alert('Storage Cleared', 'Please close and reopen the app.');
-            } catch (error) {
-              console.error('❌ Clear storage error:', error);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleChangePIN = () => {
-    if (!parentProfile?.kidModePin) {
-      Alert.alert(
-        'No PIN Set',
-        'You need to create a kid profile first to set up a PIN.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    setShowPinChangeModal(true);
-  };
-
-  const handlePinChanged = async (newPin: string) => {
-    try {
-      await changePIN(newPin);
-    } catch (error: any) {
-      throw new Error(error.message || 'Failed to change PIN');
-    }
-  };
 
   const SettingItem = ({
     title,
@@ -152,15 +52,7 @@ export default function SettingsScreen() {
     onPress: () => void;
     color?: string;
   }) => (
-    <TouchableOpacity
-      style={[styles.actionButton, { borderColor: color }]}
-      onPress={() => {
-        console.log(`🟡 ActionButton pressed: ${title}`);
-        onPress();
-      }}
-      activeOpacity={0.6}
-      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-    >
+    <TouchableOpacity style={[styles.actionButton, { borderColor: color }]} onPress={onPress}>
       <Text style={styles.actionIcon}>{icon}</Text>
       <Text style={[styles.actionTitle, { color }]}>{title}</Text>
     </TouchableOpacity>
@@ -168,61 +60,54 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-<<<<<<< HEAD
-      <PinChangeModal
-        visible={showPinChangeModal}
-        onClose={() => setShowPinChangeModal(false)}
-        onPinChanged={handlePinChanged}
-        currentPin={parentProfile?.kidModePin}
-      />
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-=======
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {false && envInfo.shouldShowDebugInfo && (
-          <EnvironmentBanner
-            onPress={() => setShowEnvironmentDebug(true)}
-            showDetails={envInfo.isDev}
-          />
-        )}
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         <View style={styles.header}>
           <Text style={styles.title}>Settings</Text>
           <Text style={styles.subtitle}>Customize your KidChef experience</Text>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>App Preferences</Text>
+          <Text style={styles.sectionTitle}>Kid Safety & Learning</Text>
+
           <SettingItem
-            title="Safety Notes"
-            description="Show safety tips and warnings during cooking"
+            title="Show Safety Notes"
+            description="Highlight when adult help is needed"
             value={safetyNotes}
             onValueChange={setSafetyNotes}
-            icon="🛡️"
+            icon="⚠️"
           />
+
           <SettingItem
-            title="Read Aloud"
-            description="Automatically read recipe instructions"
+            title="Enable Read-Aloud Mode"
+            description="Kids can hear instructions spoken out loud"
             value={readAloud}
             onValueChange={setReadAloud}
             icon="🔊"
           />
+
           <SettingItem
-            title="Auto-Simplify"
-            description="Automatically simplify complex recipes"
+            title="Auto-Simplify Recipes"
+            description="Automatically convert all recipes to kid-friendly versions"
             value={autoSimplify}
             onValueChange={setAutoSimplify}
             icon="✨"
           />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>General</Text>
+
           <SettingItem
-            title="Notifications"
-            description="Receive helpful cooking tips and updates"
+            title="Push Notifications"
+            description="Get reminders and cooking tips"
             value={notifications}
             onValueChange={setNotifications}
-            icon="📳"
+            icon="🔔"
           />
+
           <SettingItem
             title="Dark Mode"
-            description="Use dark theme throughout the app"
+            description="Switch to dark theme"
             value={darkMode}
             onValueChange={setDarkMode}
             icon="🌙"
@@ -230,53 +115,35 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
-          <Text style={styles.accountInfo}>
-            Signed in as: {user?.email || 'Unknown'}
-          </Text>
-          <Text style={styles.accountInfo}>
-            Family: {parentProfile?.familyName || 'Unknown'}
-          </Text>
+          <Text style={styles.sectionTitle}>Account & Data</Text>
 
           <ActionButton
-            title="Change Kid Mode PIN"
-            icon="🔒"
-            onPress={handleChangePIN}
+            title="Manage Family Profiles"
+            icon="👨‍👩‍👧‍👦"
+            onPress={() => console.log('Manage profiles')}
           />
+
           <ActionButton
-            title="Sign Out"
-            icon="🚪"
-            onPress={handleSignOut}
-            color="#ef4444"
+            title="Export Recipes"
+            icon="📤"
+            onPress={() => console.log('Export recipes')}
+          />
+
+          <ActionButton
+            title="Reset Kid Progress"
+            icon="🔄"
+            onPress={() => console.log('Reset progress')}
           />
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Support & Feedback</Text>
+          <Text style={styles.sectionTitle}>Support</Text>
+
           <ActionButton
-            title="Send Feedback"
-            icon="💬"
-            onPress={handleSendFeedback}
-          />
-          <ActionButton
-<<<<<<< HEAD
-=======
-            title="Report a Bug"
-            icon="🐛"
-            onPress={handleReportBug}
-          />
-          <ActionButton
-            title="Contact Support"
-            icon="🆘"
-            onPress={handleContactSupport}
-          />
-          <ActionButton
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
             title="Help & FAQ"
             icon="❓"
             onPress={() => console.log('Help')}
           />
-<<<<<<< HEAD
 
           <ActionButton
             title="Contact Support"
@@ -284,8 +151,6 @@ export default function SettingsScreen() {
             onPress={() => console.log('Contact support')}
           />
 
-=======
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
           <ActionButton
             title="Rate KidChef"
             icon="⭐"
@@ -294,15 +159,13 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Advanced</Text>
           <ActionButton
-            title="Clear Local Storage"
-            icon="🗑️"
-            onPress={handleClearStorage}
+            title="Sign Out"
+            icon="🚪"
+            onPress={() => console.log('Sign out')}
             color="#ef4444"
           />
         </View>
-
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>KidChef v1.0.0</Text>
@@ -311,29 +174,6 @@ export default function SettingsScreen() {
           </Text>
         </View>
       </ScrollView>
-
-      {showPinChangeModal && (
-        <PinChangeModal
-          visible={showPinChangeModal}
-          onClose={() => setShowPinChangeModal(false)}
-          onPinChanged={handlePinChanged}
-          currentPin={parentProfile?.kidModePin || ''}
-        />
-      )}
-
-      {showBugReportModal && (
-        <BugReportModal
-          visible={showBugReportModal}
-          onClose={() => setShowBugReportModal(false)}
-        />
-      )}
-
-      {showEnvironmentDebug && envInfo.shouldShowDebugInfo && (
-        <EnvironmentDebugModal
-          visible={showEnvironmentDebug}
-          onClose={() => setShowEnvironmentDebug(false)}
-        />
-      )}
     </SafeAreaView>
   );
 }
@@ -440,16 +280,5 @@ const styles = StyleSheet.create({
     color: '#d1d5db',
     textAlign: 'center',
     lineHeight: 18,
-  },
-  accountInfo: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginBottom: 8,
-    paddingHorizontal: 20,
-  },
-  settingAction: {
-    fontSize: 14,
-    color: '#2563eb',
-    fontWeight: '600',
   },
 });

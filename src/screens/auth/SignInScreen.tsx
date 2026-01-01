@@ -10,11 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
-<<<<<<< HEAD
-=======
 import { authService } from '../../services/auth';
-import { authErrorHandler } from '../../services/authErrorHandler';
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
 interface SignInScreenProps {
   onSwitchToSignUp: () => void;
@@ -24,7 +20,7 @@ export default function SignInScreen({ onSwitchToSignUp }: SignInScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { signIn } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
 
   const handleSignIn = async () => {
     if (!email.trim() || !password.trim()) {
@@ -36,9 +32,6 @@ export default function SignInScreen({ onSwitchToSignUp }: SignInScreenProps) {
     try {
       await signIn(email, password);
     } catch (error) {
-<<<<<<< HEAD
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to sign in');
-=======
       const errorMessage = error instanceof Error ? error.message : 'Failed to sign in';
 
       // Check if error has enhanced error info from AuthContext
@@ -134,7 +127,6 @@ export default function SignInScreen({ onSwitchToSignUp }: SignInScreenProps) {
       await signInWithGoogle();
     } catch (error) {
       Alert.alert('Google Sign-In Error', error instanceof Error ? error.message : 'Failed to sign in with Google');
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     } finally {
       setLoading(false);
     }

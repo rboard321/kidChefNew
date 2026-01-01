@@ -57,29 +57,6 @@ service cloud.firestore {
 
     // Recipes - only owners can manage their recipes (parentId-only, clean security)
     match /recipes/{recipeId} {
-<<<<<<< HEAD
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isOwner(resource.data.userId);
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
-      allow list: if isAuthenticated();
-    }
-
-    // Kid-friendly recipes - only owner access
-    match /kidRecipes/{kidRecipeId} {
-      allow read, write: if isAuthenticated() &&
-        resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() &&
-        request.resource.data.userId == request.auth.uid;
-      allow list: if isAuthenticated();
-    }
-
-    // Global kid-friendly recipe cache - read-only for users, Cloud Functions manage writes
-    match /kidRecipeCache/{cacheId} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Only Cloud Functions should manage cache
-      allow create: if false; // Only Cloud Functions should create cache entries
-=======
       allow read: if isAuthenticated() && (
         // Owner via parentId (required - clean security)
         resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
@@ -129,7 +106,6 @@ service cloud.firestore {
         // Check that the cache entry belongs to the authenticated user (required - no legacy fallback)
         request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)
       );
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     }
 
     // Cooking Sessions - only for kid's parent
@@ -164,17 +140,6 @@ service cloud.firestore {
         // Parent can read recipes they shared
         (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId))
       );
-<<<<<<< HEAD
-      allow write: if isAuthenticated() && (
-        (resource.data.kidId != null && isParentOfKid(resource.data.kidId)) ||
-        (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId))
-      );
-      allow create: if isAuthenticated() && (
-        (request.resource.data.kidId != null && isParentOfKid(request.resource.data.kidId)) ||
-        (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId))
-      );
-      allow list: if isAuthenticated();
-=======
 
       // Allow create - check the request data for new documents
       allow create: if isAuthenticated() && (
@@ -198,7 +163,6 @@ service cloud.firestore {
       allow list: if isAuthenticated() && (
         resource.data.parentUserId == request.auth.uid
       );
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     }
 
     // Kid recipe ratings - parents can rate kid recipes they have access to
@@ -232,15 +196,6 @@ service cloud.firestore {
         isParentOfKid(resource.data.kidId)
       );
     }
-
-<<<<<<< HEAD
-    // Recipe import cache - accessible by authenticated users for caching recipe imports
-    match /recipeImportCache/{cacheId} {
-      allow read: if isAuthenticated();
-      allow write, create: if isAuthenticated(); // Allow users to cache their imports
-    }
-=======
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
     // Kid Progress tracking - only accessible by parents of the kid
     match /kidProgress/{kidId} {

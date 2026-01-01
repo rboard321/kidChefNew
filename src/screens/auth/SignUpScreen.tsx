@@ -41,18 +41,6 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
 
     setLoading(true);
     try {
-<<<<<<< HEAD
-      await signUp(email, password, {
-        familyName,
-        kidLevel: 'beginner',
-        settings: {
-          showDifficulty: true,
-          allowKidsToViewIngredients: true,
-          enableVoiceInstructions: false,
-          preferredTemperatureUnit: 'fahrenheit',
-        },
-      });
-=======
       await signUp(email, password, {});
 
       // Show email verification success message
@@ -61,7 +49,6 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
         'We\'ve sent a verification email to your address. Please check your email and click the verification link before signing in.',
         [{ text: 'OK', onPress: onSwitchToSignIn }]
       );
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create account';
       const errorInfo = (error as any)?.errorInfo;
@@ -95,20 +82,6 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
         </View>
 
         <View style={styles.form}>
-<<<<<<< HEAD
-          <Text style={styles.label}>Family Name</Text>
-          <TextInput
-            style={styles.input}
-            value={familyName}
-            onChangeText={setFamilyName}
-            placeholder="The Smith Family"
-            placeholderTextColor="#9ca3af"
-            autoCapitalize="words"
-            editable={!loading}
-          />
-
-=======
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
           <Text style={styles.label}>Email</Text>
           <TextInput
             style={styles.input}

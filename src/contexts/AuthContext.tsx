@@ -4,21 +4,6 @@ import { authService } from '../services/auth';
 import { authErrorHandler, authOperationManager } from '../services/authErrorHandler';
 import { parentProfileService } from '../services/parentProfile';
 import { kidProfileService } from '../services/kidProfile';
-<<<<<<< HEAD
-import { migrationService } from '../services/migration';
-import type { UserProfile, ParentProfile, KidProfile } from '../types';
-
-interface AuthContextType {
-  user: User | null;
-  userProfile: UserProfile | null; // Legacy profile for backward compatibility
-  parentProfile: ParentProfile | null; // Enhanced parent profile
-  kidProfiles: KidProfile[]; // All kids for this parent
-  currentKid: KidProfile | null; // Currently selected kid profile
-  deviceMode: 'parent' | 'kid'; // Device mode setting
-  loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, profile: Partial<UserProfile>) => Promise<void>;
-=======
 import { hashPin, verifyPin, validatePinFormat } from '../utils/pinSecurity';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import { parentalConsentService, type ConsentStatus } from '../services/parentalConsent';
@@ -38,7 +23,6 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signUp: (email: string, password: string, profile: Partial<ParentProfile>) => Promise<void>;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   signOut: () => Promise<void>;
   setDeviceMode: (mode: 'parent' | 'kid') => void;
   setDeviceModeWithPin: (mode: 'parent' | 'kid', pin?: string) => Promise<boolean>;
@@ -73,30 +57,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadUserProfile = async (user: User) => {
     try {
-<<<<<<< HEAD
-      // Load legacy profile for backward compatibility
-      const profile = await authService.getUserProfile(user.uid);
-      setUserProfile(profile);
-
-      // Load or migrate to new multi-kid system
-      let parent = await parentProfileService.getParentProfile(user.uid);
-
-      if (!parent) {
-        // Check if migration is needed
-        const migrationNeeded = await migrationService.checkMigrationNeeded(user.uid);
-        if (migrationNeeded) {
-          console.log('Migrating user to multi-kid system...');
-          const { parentId } = await migrationService.migrateUserToMultiKid(user.uid);
-          parent = await parentProfileService.getParentProfile(user.uid);
-        }
-      }
-
-=======
       console.log('🔄 Loading user profile for UID:', user.uid);
       // Load parent profile
       const parent = await parentProfileService.getParentProfile(user.uid);
       console.log('👨‍👩‍👧‍👦 Parent profile loaded:', parent ? { id: parent.id, parentName: parent.parentName, familyName: parent.familyName } : 'null');
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
       setParentProfile(parent);
 
       // Load kids if parent profile exists
@@ -180,9 +144,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-<<<<<<< HEAD
-      await authService.signIn(email, password);
-=======
       console.log('🔐 Starting sign-in process for email:', email);
 
       // Use enhanced auth operation manager for automatic retry
@@ -220,7 +181,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       console.log('✅ Email verification successful, continuing with sign-in');
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     } catch (error) {
       console.error('❌ Sign-in failed:', {
         error: error instanceof Error ? error.message : error,
@@ -243,9 +203,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUp = async (email: string, password: string, profile: Partial<ParentProfile>) => {
     setLoading(true);
     try {
-<<<<<<< HEAD
-      await authService.signUp(email, password, profile);
-=======
       // Use enhanced auth operation manager for signup with retry
       const user = await authOperationManager.executeWithRetry(
         () => authService.signUp(email, password, profile),
@@ -284,7 +241,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     try {
       await authService.signInWithGoogle();
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     } catch (error) {
       setLoading(false);
       throw error;
@@ -324,16 +280,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         targetParent = await parentProfileService.getParentProfile(user.uid);
       }
 
-<<<<<<< HEAD
-      if (!targetParent) throw new Error('No parent profile found');
-=======
       if (!parentProfile) throw new Error('No parent profile found');
 
       // Hash the PIN before storing
       console.log('📝 Setting new PIN for parent profile:', parentProfile.id);
       const hashedPin = await hashPin(pin);
       console.log('📝 About to store hashed PIN:', hashedPin.substring(0, 20) + '...');
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
       await parentProfileService.updateParentProfile(targetParent.id, { kidModePin: pin });
       await refreshProfile();
@@ -447,8 +399,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('✅ Kid ID added to parent profile');
 
       await refreshProfile();
-<<<<<<< HEAD
-=======
       console.log('✅ Profile refreshed after kid addition');
 
       // Send COPPA-required kid profile creation notice
@@ -466,7 +416,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       console.log('✅ Kid creation completed successfully');
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
       return kidId;
     } catch (error) {
       console.error('❌ Error adding kid:', {

@@ -3,11 +3,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 
 export interface AIService {
-<<<<<<< HEAD
-  convertToKidFriendly: (recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number) => Promise<Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>>;
-=======
   convertToKidFriendly: (recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number, allergyFlags?: string[]) => Promise<ConversionResult>;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 }
 
 interface KidFriendlyConversionRequest {
@@ -21,25 +17,6 @@ interface KidFriendlyConversionRequest {
 // All AI conversions now go through Cloud Functions for security
 
 export const aiService: AIService = {
-<<<<<<< HEAD
-  async convertToKidFriendly(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number): Promise<Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>> {
-    try {
-      // Check if API key is available and has quota
-      if (OPENAI_API_KEY && !OPENAI_API_KEY.includes('your_')) {
-        try {
-          console.log(`Converting recipe "${recipe.title}" for ${readingLevel} reading level (age: ${kidAge || 'auto'})`);
-          const result = await realAIConversion(recipe, readingLevel, kidAge);
-          console.log('✅ Real AI conversion successful');
-          return result;
-        } catch (error) {
-          // If quota exceeded or other API error, fall back gracefully
-          console.log('❌ Real AI conversion failed, falling back to enhanced mock:', error instanceof Error ? error.message : 'Unknown error');
-          return await enhancedMockConversion(recipe, readingLevel, kidAge);
-        }
-      } else {
-        console.log('📝 Using enhanced mock AI conversion (OpenAI API not configured)');
-        return await enhancedMockConversion(recipe, readingLevel, kidAge);
-=======
   async convertToKidFriendly(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number, allergyFlags?: string[]): Promise<ConversionResult> {
     try {
       // SECURITY: All AI conversions now use Cloud Functions for security
@@ -51,7 +28,6 @@ export const aiService: AIService = {
           readingLevel,
           kidAge: kidAge || getAgeFromLevel(readingLevel)
         });
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
       }
 
       // Call the Cloud Function for AI recipe conversion
@@ -134,232 +110,8 @@ function getAgeFromLevel(level: ReadingLevel): number {
   }
 }
 
-<<<<<<< HEAD
-// Real AI conversion using OpenAI
-async function realAIConversion(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number): Promise<Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>> {
-  const ageRange = kidAge ? `${kidAge}` : getAgeRangeForLevel(readingLevel);
-  const ageForPrompt = kidAge ?? getAgeFromLevel(readingLevel);
-
-  // Retry configuration
-  const maxRetries = 3;
-  let retryCount = 0;
-
-  const prompt = `You are a professional chef and child development expert. Convert this recipe into a kid-friendly version for children aged ${ageRange} with ${readingLevel} reading level.
-
-Original Recipe:
-Title: ${recipe.title}
-Ingredients: ${recipe.ingredients?.map(ing => (typeof ing === 'string' ? ing : `${ing.amount || ''} ${ing.unit || ''} ${ing.name}`.trim())).join(', ') || 'No ingredients listed'}
-Instructions: ${recipe.instructions?.join('. ') || recipe.steps?.map(step => step.step).join('. ') || 'No instructions available'}
-
-Please provide a JSON response with this exact structure:
-{
-  "userId": "",
-  "kidAge": ${ageForPrompt},
-  "targetReadingLevel": "${readingLevel}",
-  "simplifiedIngredients": [
-    {
-      "id": "unique_id",
-      "name": "ingredient_name",
-      "amount": number_or_null,
-      "unit": "unit_or_null",
-      "kidFriendlyName": "simple_name_for_kids",
-      "description": "helpful_description",
-      "order": number
-    }
-  ],
-  "simplifiedSteps": [
-    {
-      "id": "unique_id",
-      "step": "original_step",
-      "kidFriendlyText": "simplified_instruction_for_kids",
-      "icon": "relevant_emoji",
-      "safetyNote": "safety_warning_if_needed",
-      "time": "time_estimate",
-      "order": number,
-      "completed": false,
-      "difficulty": "easy|medium|hard",
-      "encouragement": "motivational_message"
-    }
-  ],
-  "safetyNotes": ["important safety note 1", "safety note 2"],
-  "estimatedDuration": number_in_minutes,
-  "skillsRequired": ["skill1", "skill2"]
-}
-
-Guidelines:
-- Use simple words for ${readingLevel} level (${ageRange} years old)
-- Add safety notes for any dangerous steps (knives, heat, etc.)
-- Include encouraging messages for kids
-- Use food emojis for steps
-- Break complex steps into smaller ones
-- Suggest adult help when needed`;
-
-  while (retryCount <= maxRetries) {
-    try {
-      // Add delay for retries
-      if (retryCount > 0) {
-        const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
-        console.log(`Retrying OpenAI API call in ${delay}ms (attempt ${retryCount + 1}/${maxRetries + 1})`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-
-      const response = await fetch(OPENAI_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a helpful assistant that converts recipes to be kid-friendly. Always respond with valid JSON only.'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 4000,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.warn(`OpenAI API error ${response.status}:`, errorText);
-
-      // Parse error for quota issues
-      let isQuotaError = false;
-      try {
-        const errorData = JSON.parse(errorText);
-        isQuotaError = errorData.error?.type === 'insufficient_quota';
-      } catch (e) {
-        // Ignore JSON parse errors
-      }
-
-      if (response.status === 429) {
-        if (isQuotaError) {
-          console.log('OpenAI quota exceeded, falling back to mock conversion');
-          throw new Error(`OpenAI API error: ${response.status} - insufficient_quota`);
-        } else {
-          console.log('Rate limit exceeded, falling back to mock conversion');
-        }
-      } else if (response.status === 401) {
-        console.log('Invalid API key, falling back to mock conversion');
-      } else if (response.status >= 500) {
-        console.log('OpenAI server error, falling back to mock conversion');
-      }
-
-      throw new Error(`OpenAI API error: ${response.status}`);
-    }
-
-      const data = await response.json();
-
-      // Get the content from OpenAI response
-      const rawContent = data.choices[0]?.message?.content;
-      if (!rawContent) {
-        throw new Error('No content received from OpenAI API');
-      }
-
-      console.log('Raw OpenAI response:', rawContent.substring(0, 200) + '...');
-
-      // Clean up the response content - remove any markdown formatting and comments
-      let cleanContent = rawContent
-        .replace(/```json\s*/g, '')  // Remove ```json
-        .replace(/```\s*/g, '')      // Remove ending ```
-        .replace(/\/\/.*$/gm, '')    // Remove single-line comments
-        .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
-        .trim();
-
-      // Replace common Unicode fractions with decimal numbers
-      const fractionReplacements: { [key: string]: string } = {
-        '½': '0.5',
-        '⅓': '0.33',
-        '⅔': '0.67',
-        '¼': '0.25',
-        '¾': '0.75',
-        '⅕': '0.2',
-        '⅖': '0.4',
-        '⅗': '0.6',
-        '⅘': '0.8',
-        '⅙': '0.17',
-        '⅚': '0.83',
-        '⅛': '0.125',
-        '⅜': '0.375',
-        '⅝': '0.625',
-        '⅞': '0.875'
-      };
-
-      for (const [fraction, decimal] of Object.entries(fractionReplacements)) {
-        cleanContent = cleanContent.replace(new RegExp(fraction, 'g'), decimal);
-      }
-
-      // Find JSON content if it's wrapped in text
-      const jsonStart = cleanContent.indexOf('{');
-      const jsonEnd = cleanContent.lastIndexOf('}') + 1;
-
-      if (jsonStart !== -1 && jsonEnd > jsonStart) {
-        cleanContent = cleanContent.substring(jsonStart, jsonEnd);
-      }
-
-      console.log('Cleaned content for parsing:', cleanContent.substring(0, 100) + '...');
-
-      // Parse the cleaned JSON
-      let aiResponse;
-      try {
-        aiResponse = JSON.parse(cleanContent);
-      } catch (parseError) {
-        console.error('Failed to parse OpenAI JSON response:', parseError);
-        console.error('Content that failed to parse:', cleanContent);
-        throw new Error(`Invalid JSON response from OpenAI: ${parseError instanceof Error ? parseError.message : 'Unknown parsing error'}`);
-      }
-
-      // Validate the response has expected structure
-      if (!aiResponse.simplifiedIngredients || !aiResponse.simplifiedSteps) {
-        console.error('Missing required fields in AI response:', aiResponse);
-        throw new Error('AI response missing required fields (simplifiedIngredients or simplifiedSteps)');
-      }
-
-      console.log('Successfully parsed AI response with', aiResponse.simplifiedIngredients.length, 'ingredients and', aiResponse.simplifiedSteps.length, 'steps');
-
-      return aiResponse;
-
-    } catch (error) {
-      console.error(`OpenAI API attempt ${retryCount + 1} failed:`, error);
-
-      // Check if it's a quota issue - don't retry for these
-      if (error instanceof Error && error.message.includes('insufficient_quota')) {
-        console.log('OpenAI quota exceeded - falling back to enhanced mock');
-        throw error; // Let the parent function handle fallback
-      }
-
-      // Check if it's a JSON parsing error - don't retry these
-      if (error instanceof Error && error.message.includes('Invalid JSON response')) {
-        console.log('JSON parsing failed - falling back to enhanced mock');
-        throw error; // Let the parent function handle fallback
-      }
-
-      // Check if it's a rate limit error and we have retries left
-      if (error instanceof Error && error.message.includes('429') && retryCount < maxRetries) {
-        retryCount++;
-        continue; // Retry
-      }
-
-      // For other errors or max retries reached, fall back to mock
-      console.error('Real AI conversion failed, falling back to enhanced mock:', error);
-      throw error; // Let the parent function handle fallback
-    }
-  }
-
-  // This shouldn't be reached, but just in case
-  return await enhancedMockConversion(recipe, readingLevel, kidAge);
-}
-=======
 // REMOVED: Real AI conversion function - now handled server-side for security
 // All AI conversion logic has been moved to Cloud Functions to protect API keys
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
 // Enhanced mock implementation with better logic
 async function enhancedMockConversion(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number): Promise<Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>> {

@@ -5,18 +5,13 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 import { deepLinkService } from '../services/deepLinkService';
-<<<<<<< HEAD
-=======
-import ParentalConsentScreen from '../screens/parent/ParentalConsentScreen';
 import { ErrorBoundary, AuthErrorBoundary } from '../components/ErrorBoundary';
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
 // Auth screens
 import AuthScreen from '../screens/auth/AuthScreen';
 
 // Onboarding screens
 import WelcomeScreen from '../screens/onboarding/WelcomeScreen';
-import KidLevelScreen from '../screens/onboarding/KidLevelScreen';
 import ParentSettingsScreen from '../screens/onboarding/ParentSettingsScreen';
 
 // Parent screens
@@ -139,7 +134,7 @@ function KidTabNavigator() {
 
 // Main App Navigator
 export default function AppNavigator() {
-  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode } = useAuth();
+  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode, consentStatus, checkConsentStatus } = useAuth();
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState(false);
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
 
@@ -186,22 +181,24 @@ export default function AppNavigator() {
             )}
           </RootStack.Screen>
         ) : !hasCompletedOnboarding ? (
+          // Temporarily skip parental consent for testing
+          // ) : consentStatus !== 'verified' ? (
+          //   // Authenticated but parental consent not verified - show consent screen
+          //   <RootStack.Screen name="ParentalConsent">
+          //     {() => (
+          //       <ParentalConsentScreen
+          //         onConsentVerified={() => {
+          //           checkConsentStatus();
+          //         }}
+          //       />
+          //     )}
+          //   </RootStack.Screen>
+          // ) : !hasCompletedOnboarding ? (
           // Authenticated but no profile - show onboarding
-<<<<<<< HEAD
-          <>
-            <RootStack.Screen name="Welcome" component={WelcomeScreen} />
-            <RootStack.Screen name="KidLevel" component={KidLevelScreen} />
-            <RootStack.Screen
-              name="ParentSettings"
-              children={() => <ParentSettingsScreen onComplete={completeOnboarding} />}
-            />
-          </>
-=======
           <RootStack.Screen
             name="ParentSettings"
             children={() => <ParentSettingsScreen onComplete={completeOnboarding} />}
           />
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         ) : deviceMode === 'kid' ? (
           // Device is in Kid Mode - show kid stack
           <>

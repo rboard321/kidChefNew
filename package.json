@@ -4,11 +4,6 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-<<<<<<< HEAD
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
-=======
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
@@ -18,7 +13,6 @@
     "build:dev": "EXPO_PUBLIC_ENVIRONMENT=development eas build --platform all --profile development",
     "build:staging": "EXPO_PUBLIC_ENVIRONMENT=staging eas build --platform all --profile preview",
     "build:prod": "EXPO_PUBLIC_ENVIRONMENT=production eas build --platform all --profile production"
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -26,26 +20,18 @@
     "@react-navigation/material-top-tabs": "^7.4.11",
     "@react-navigation/native": "^7.1.26",
     "@react-navigation/native-stack": "^7.9.0",
-<<<<<<< HEAD
-=======
     "@stripe/stripe-react-native": "0.50.3",
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     "@tanstack/react-query": "^5.90.12",
     "@tanstack/react-query-persist-client": "^5.90.14",
     "expo": "~54.0.30",
     "expo-application": "^7.0.8",
     "expo-av": "^16.0.8",
-<<<<<<< HEAD
-    "expo-image": "^3.0.11",
-    "expo-linking": "^8.0.11",
-=======
     "expo-crypto": "~15.0.8",
     "expo-device": "^8.0.10",
     "expo-image": "^3.0.11",
     "expo-linking": "^8.0.11",
     "expo-network": "^8.0.8",
     "expo-sensors": "^15.0.8",
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     "expo-speech": "^14.0.8",
     "expo-status-bar": "~3.0.9",
     "firebase": "^12.7.0",

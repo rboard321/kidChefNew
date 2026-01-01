@@ -14,13 +14,8 @@ export interface AuthService {
   signIn: (email: string, password: string) => Promise<User>;
   signOut: () => Promise<void>;
   onAuthStateChanged: (callback: (user: User | null) => void) => () => void;
-<<<<<<< HEAD
-  getUserProfile: (userId: string) => Promise<UserProfile | null>;
-  updateUserProfile: (userId: string, profile: Partial<UserProfile>) => Promise<void>;
-=======
   sendEmailVerification: (user: User) => Promise<void>;
   checkEmailVerification: (user: User) => Promise<boolean>;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 }
 
 export const authService: AuthService = {
@@ -30,21 +25,6 @@ export const authService: AuthService = {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-<<<<<<< HEAD
-    // Create user profile in Firestore
-    const userProfile: UserProfile = {
-      id: user.uid,
-      parentName: profile.parentName || '',
-      kidName: profile.kidName || '',
-      kidAge: profile.kidAge || 6,
-      readingLevel: profile.readingLevel || 'beginner',
-      email: user.email || email,
-      createdAt: new Date(),
-      ...profile
-    };
-
-    await setDoc(doc(db, 'userProfiles', user.uid), userProfile);
-=======
     console.log('👤 User account created successfully:', {
       uid: user.uid,
       email: user.email,
@@ -62,7 +42,6 @@ export const authService: AuthService = {
     }
 
     // Note: Parent profile creation is now handled in ParentSettingsScreen
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     return user;
   },
 
@@ -79,27 +58,6 @@ export const authService: AuthService = {
     return onAuthStateChanged(auth, callback);
   },
 
-<<<<<<< HEAD
-  async getUserProfile(userId: string): Promise<UserProfile | null> {
-    try {
-      const docSnap = await getDoc(doc(db, 'userProfiles', userId));
-      if (docSnap.exists()) {
-        return docSnap.data() as UserProfile;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error fetching user profile:', error);
-      return null;
-    }
-  },
-
-  async updateUserProfile(userId: string, profile: Partial<UserProfile>) {
-    try {
-      await setDoc(doc(db, 'userProfiles', userId), profile, { merge: true });
-    } catch (error) {
-      console.error('Error updating user profile:', error);
-      throw error;
-=======
 
   async sendEmailVerification(user: User) {
     try {
@@ -192,7 +150,6 @@ export const authService: AuthService = {
         timestamp: new Date().toISOString()
       });
       return false;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     }
   },
 };

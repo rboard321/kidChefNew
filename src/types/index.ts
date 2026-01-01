@@ -6,22 +6,6 @@ export type ReadingLevel = 'beginner' | 'intermediate' | 'advanced';
 // Date types that handle both Date objects and Firestore Timestamps
 type FirestoreDate = Date | Timestamp;
 
-<<<<<<< HEAD
-// User Profile Types (Legacy - maintained for backward compatibility)
-export interface UserProfile {
-  id: string;
-  parentName: string;
-  kidName: string;
-  kidAge: number;
-  readingLevel: ReadingLevel;
-  email?: string;
-  settings?: UserSettings;
-  familyName?: string;
-  createdAt: FirestoreDate;
-}
-=======
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
-
 // Enhanced Multi-Kid Profile Types
 export interface ParentProfile {
   id: string;

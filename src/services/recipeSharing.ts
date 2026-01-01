@@ -11,7 +11,7 @@ import {
   where,
   Timestamp
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import type { Recipe, KidProfile } from '../types';
 
 export interface SharedRecipe {
@@ -19,6 +19,7 @@ export interface SharedRecipe {
   parentRecipeId: string;
   kidId: string;
   parentId: string;
+  parentUserId: string; // Firebase Auth UID for direct permission checking
   sharedAt: Date;
   permissions: {
     canConvert: boolean;
@@ -42,7 +43,9 @@ export const recipeSharingService: RecipeSharingService = {
       // Check if already shared
       const isShared = await this.isRecipeSharedWithKid(parentRecipeId, kidId);
       if (isShared) {
-        console.log('Recipe already shared with this kid');
+        if (__DEV__) {
+          console.log('Recipe already shared with this kid');
+        }
         return;
       }
 
@@ -56,10 +59,7 @@ export const recipeSharingService: RecipeSharingService = {
         parentRecipeId,
         kidId,
         parentId,
-<<<<<<< HEAD
-=======
         parentUserId: currentUserId,
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         sharedAt: Timestamp.now(),
         permissions: {
           canConvert: true,
@@ -67,10 +67,6 @@ export const recipeSharingService: RecipeSharingService = {
         },
       };
 
-<<<<<<< HEAD
-      await addDoc(collection(db, 'sharedRecipes'), sharedRecipe);
-      console.log('Recipe shared successfully');
-=======
       if (__DEV__) {
         console.log('🔗 About to create shared recipe:', {
           parentRecipeId,
@@ -87,7 +83,6 @@ export const recipeSharingService: RecipeSharingService = {
       if (__DEV__) {
         console.log('✅ Recipe shared successfully');
       }
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     } catch (error) {
       console.error('❌ Error sharing recipe:', {
         error: error.message || error,
@@ -116,7 +111,9 @@ export const recipeSharingService: RecipeSharingService = {
         await deleteDoc(doc.ref);
       }
 
-      console.log('Recipe unshared successfully');
+      if (__DEV__) {
+        console.log('Recipe unshared successfully');
+      }
     } catch (error) {
       console.error('Error unsharing recipe:', error);
       throw error;
@@ -229,7 +226,9 @@ export const recipeSharingService: RecipeSharingService = {
         await this.shareRecipeWithKid(parentRecipeId, kidDoc.id, parentId);
       }
 
-      console.log('Recipe shared with all kids successfully');
+      if (__DEV__) {
+        console.log('Recipe shared with all kids successfully');
+      }
     } catch (error) {
       console.error('Error sharing recipe with all kids:', error);
       throw error;

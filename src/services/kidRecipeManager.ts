@@ -66,59 +66,6 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       }
       console.log(`🆕 No existing kid recipe found, proceeding with new conversion`);
 
-<<<<<<< HEAD
-      const sourceUrl = (originalRecipe as { sourceUrl?: string }).sourceUrl || originalRecipe.url;
-      const ageRange = sourceUrl ? getAgeRangeForKid(kidAge, readingLevel) : null;
-      let convertedData: Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'> | null = null;
-
-      if (sourceUrl && ageRange) {
-        const cacheKey = buildCacheKey(sourceUrl, readingLevel, ageRange);
-        const cacheDoc = await getDoc(doc(db, 'kidRecipeCache', cacheKey));
-        if (cacheDoc.exists()) {
-          const cacheEntry = cacheDoc.data() as KidRecipeCacheEntry;
-          convertedData = {
-            userId: originalRecipe.userId || '',
-            kidAge: cacheEntry.kidAge,
-            targetReadingLevel: cacheEntry.readingLevel,
-            simplifiedIngredients: cacheEntry.simplifiedIngredients,
-            simplifiedSteps: cacheEntry.simplifiedSteps,
-            safetyNotes: cacheEntry.safetyNotes,
-            estimatedDuration: cacheEntry.estimatedDuration,
-            skillsRequired: cacheEntry.skillsRequired,
-          };
-        }
-      }
-
-      if (!convertedData) {
-        console.log(`Converting recipe "${originalRecipe.title}" for kid ${kidId} at ${readingLevel} level`);
-        convertedData = await aiService.convertToKidFriendly(originalRecipe, readingLevel, kidAge);
-        if (sourceUrl && ageRange) {
-          const cacheKey = buildCacheKey(sourceUrl, readingLevel, ageRange);
-          const now = Timestamp.now();
-          const cacheEntry: KidRecipeCacheEntry = {
-            sourceUrl,
-            readingLevel,
-            ageRange,
-            kidAge: convertedData.kidAge,
-            simplifiedIngredients: convertedData.simplifiedIngredients,
-            simplifiedSteps: convertedData.simplifiedSteps,
-            safetyNotes: convertedData.safetyNotes,
-            estimatedDuration: convertedData.estimatedDuration,
-            skillsRequired: convertedData.skillsRequired,
-            createdAt: now,
-            updatedAt: now,
-          };
-          await setDoc(doc(db, 'kidRecipeCache', cacheKey), stripUndefined(cacheEntry));
-        }
-      }
-
-      const safeConvertedData = stripUndefined(convertedData) as Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>;
-
-      // Create kid recipe object
-      const kidRecipe: Omit<KidRecipe, 'id'> = {
-        ...safeConvertedData,
-        originalRecipeId: originalRecipe.id,
-=======
       // Get kid profile to extract allergies
       const kidProfile = await kidProfileService.getKidProfile(kidId);
       if (!kidProfile) {
@@ -145,7 +92,6 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
 
       const response = await convertRecipeForKid({
         recipeId: originalRecipe.id,
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
         kidId,
         kidAge: kidAge || getAgeFromLevel(readingLevel),
         readingLevel,
@@ -154,11 +100,6 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
 
       const result = response.data as any;
 
-<<<<<<< HEAD
-      // Save to database
-      const docRef = await addDoc(collection(db, 'kidRecipes'), stripUndefined(kidRecipe));
-      console.log('Kid recipe saved successfully with ID:', docRef.id);
-=======
       if (__DEV__) {
         console.log('✅ Cloud Function response received:', {
           success: result?.success,
@@ -174,13 +115,8 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
 
       console.log(`Kid recipe converted and saved successfully with ID: ${result.kidRecipeId}`);
       return result.kidRecipeId;
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
 
     } catch (error) {
-<<<<<<< HEAD
-      console.error('Error converting and saving recipe:', error);
-      throw error;
-=======
       console.error('Error converting and saving recipe via Cloud Function:', {
         error: error?.message || error,
         code: error?.code || 'unknown',
@@ -251,7 +187,6 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         console.error('❌ Both Cloud Function and fallback failed:', fallbackError);
         throw new Error(`Failed to convert recipe "${originalRecipe.title}". Please try again.`);
       }
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
     }
   },
 

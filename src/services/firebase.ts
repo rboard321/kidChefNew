@@ -11,10 +11,6 @@ import { getEnvironment } from '../utils/environment';
 
 // Firebase config with validation
 const getFirebaseConfig = () => {
-<<<<<<< HEAD
-  // In a production app, you might want to get these from a secure config service
-  // For now, keeping them here since Firebase client keys are safe to expose
-=======
   // Debug environment variable loading
   if (__DEV__) {
     console.group('🔍 Environment Variable Debug');
@@ -29,14 +25,13 @@ const getFirebaseConfig = () => {
   const environment = getEnvironment();
 
   // Environment-specific Firebase configuration using env variables
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   const config = {
-    apiKey: "AIzaSyDTcvNJbdVkoICXZwg78Sh9lIks4j_XWvo",
-    authDomain: "kidchef.firebaseapp.com",
-    projectId: "kidchef",
-    storageBucket: "kidchef.firebasestorage.app",
-    messagingSenderId: "198273265652",
-    appId: "1:198273265652:web:4a10431ff054f49e0fd3a1"
+    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "AIzaSyDTcvNJbdVkoICXZwg78Sh9lIks4j_XWvo",
+    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || "kidchef.firebaseapp.com",
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "kidchef",
+    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || "kidchef.firebasestorage.app",
+    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "198273265652",
+    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || "1:198273265652:web:4a10431ff054f49e0fd3a1"
   };
 
   // Validate required config values
@@ -68,13 +63,6 @@ try {
   functions = getFunctions(app, 'us-central1');
   storage = getStorage(app);
 
-<<<<<<< HEAD
-  // Dev-only logging
-  if (__DEV__) {
-    console.log('Firebase app initialized:', app.name);
-    console.log('Functions region:', 'us-central1');
-    console.log('Auth persistence configured for React Native');
-=======
   // Environment-specific logging and configuration
   const environment = getEnvironment();
 
@@ -118,7 +106,6 @@ try {
   if (environment === 'development') {
     // Development-specific configurations can go here
     // e.g., connect to emulators if needed
->>>>>>> 9d14aef (Implement native share extension infrastructure for recipe imports)
   }
 
 } catch (error) {
