@@ -1,7 +1,7 @@
 "use strict";
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.testScraperHarness = exports.trackAnalyticsEvent = exports.trackFeatureUsage = exports.trackPerformanceMetrics = exports.trackUserSession = exports.reportError = exports.deleteKidRecipe = exports.triggerQualityAutoRegeneration = exports.getQualityAnalytics = exports.reportUnclearStep = exports.rateKidRecipe = exports.getKidProfileById = exports.createKidProfile = exports.importRecipeSecure = exports.importRecipeHttp = exports.convertRecipeForKid = exports.scrapeRecipeV2 = void 0;
+exports.testScraperHarness = exports.trackAnalyticsEvent = exports.trackFeatureUsage = exports.trackPerformanceMetrics = exports.trackUserSession = exports.reportError = exports.deleteKidRecipe = exports.triggerQualityAutoRegeneration = exports.getQualityAnalytics = exports.reportUnclearStep = exports.rateKidRecipe = exports.getKidProfileById = exports.createKidProfile = exports.importRecipeSecure = exports.saveImportedRecipeHttp = exports.importRecipeHttp = exports.convertRecipeForKid = exports.scrapeRecipeV2 = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const axios_1 = require("axios");
@@ -13,9 +13,12 @@ const enhancedAIService_1 = require("./services/enhancedAIService");
 const enhancedRequestService_1 = require("./services/enhancedRequestService");
 admin.initializeApp();
 // Initialize OpenAI - API key stored securely in environment variables
-const openai = new openai_1.default({
-    apiKey: ((_a = functions.config().openai) === null || _a === void 0 ? void 0 : _a.api_key) || process.env.OPENAI_API_KEY,
-});
+const openaiApiKey = ((_a = functions.config().openai) === null || _a === void 0 ? void 0 : _a.api_key) || process.env.OPENAI_API_KEY;
+const openai = openaiApiKey ? new openai_1.default({ apiKey: openaiApiKey }) : null;
+if (!openai) {
+    console.warn('⚠️ OpenAI API key not configured');
+    console.warn('Basic recipe scraping will work, but AI enhancement is disabled');
+}
 exports.scrapeRecipeV2 = functions.https.onCall(async (data, context) => {
     try {
         const { url } = data;
@@ -172,8 +175,19 @@ function validateAndCleanRecipe(recipe, url) {
 async function extractRecipeWithAI(url, html, hints) {
     var _a, _b, _c;
     const apiKey = ((_a = functions.config().openai) === null || _a === void 0 ? void 0 : _a.api_key) || process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-        throw new Error('OpenAI API key not configured for AI fallback');
+    if (!apiKey || !openai) {
+        console.warn('⚠️ OpenAI not available - returning basic extraction');
+        // Return basic extraction result without AI
+        const $ = cheerio.load(html);
+        const title = $('h1').first().text().trim() || hints.title || 'Recipe';
+        const ingredients = $('.ingredient, .recipe-ingredient, .ingredients li').map((_, el) => $(el).text().trim()).get().filter(Boolean);
+        const instructions = $('.instruction, .directions li, .instructions li').map((_, el) => $(el).text().trim()).get().filter(Boolean);
+        return {
+            title,
+            ingredients: ingredients.length > 0 ? ingredients : [],
+            instructions: instructions.length > 0 ? instructions : [],
+            sourceUrl: url
+        };
     }
     const $ = cheerio.load(html);
     const articleText = $('article').text() || $('main').text() || $('.recipe').text() || $('.entry-content').text() || $('body').text();
@@ -356,6 +370,205 @@ async function extractRecipeWithDetails(url) {
         };
     }
 }
+async function extractRecipeWithDetailsFromHtml(url, html) {
+    var _a, _b, _c;
+    try {
+        const cached = await getRecipeFromCache(url);
+        if (cached) {
+            console.log('Scrape debug: cache hit', { url });
+            return { recipe: cached, confidence: 1.0, method: 'cache' };
+        }
+        const $ = cheerio.load(html);
+        console.log('Scrape debug: Starting modular scraper extraction (html)', {
+            url,
+            htmlLength: (html === null || html === void 0 ? void 0 : html.length) || 0
+        });
+        const scraperManager = new ScraperManager_1.ScraperManager();
+        const result = await scraperManager.scrapeRecipe(url, $, html);
+        console.log('Scrape debug: Scraper result (html)', {
+            confidence: result.confidence,
+            method: result.method,
+            hasRecipe: !!result.recipe,
+            title: (_a = result.recipe) === null || _a === void 0 ? void 0 : _a.title,
+            issues: result.issues
+        });
+        if (result.recipe && result.confidence > 0.2) {
+            if (!result.recipe.image) {
+                result.recipe.image = extractImageFromMetaTags($);
+            }
+            try {
+                if (result.recipe.title && result.recipe.ingredients && result.recipe.instructions) {
+                    const validated = validateAndCleanRecipe(result.recipe, url);
+                    if (validated) {
+                        console.log('Scrape debug: Validation successful (html)', {
+                            title: validated.title,
+                            method: result.method,
+                            confidence: result.confidence
+                        });
+                        return {
+                            recipe: validated,
+                            confidence: result.confidence,
+                            method: result.method,
+                            issues: result.issues
+                        };
+                    }
+                }
+                else {
+                    console.log('Scrape debug: Essential fields missing, returning partial (html)', {
+                        hasTitle: !!result.recipe.title,
+                        hasIngredients: !!((_b = result.recipe.ingredients) === null || _b === void 0 ? void 0 : _b.length),
+                        hasInstructions: !!((_c = result.recipe.instructions) === null || _c === void 0 ? void 0 : _c.length),
+                        method: result.method,
+                        confidence: result.confidence
+                    });
+                    return {
+                        recipe: result.recipe,
+                        confidence: result.confidence,
+                        method: result.method,
+                        issues: result.issues
+                    };
+                }
+            }
+            catch (error) {
+                console.warn('Scrape debug: Validation failed (html)', {
+                    error: error instanceof Error ? error.message : String(error),
+                    method: result.method,
+                    confidence: result.confidence
+                });
+                return {
+                    recipe: result.recipe,
+                    confidence: Math.max(result.confidence - 0.1, 0.1),
+                    method: result.method,
+                    issues: [...(result.issues || []), `Validation failed: ${error instanceof Error ? error.message : String(error)}`]
+                };
+            }
+        }
+        return {
+            recipe: result.recipe || undefined,
+            confidence: result.confidence,
+            method: result.method,
+            issues: result.issues
+        };
+    }
+    catch (error) {
+        console.error('Error in extractRecipeWithDetailsFromHtml:', {
+            message: error.message,
+            url: url,
+            timestamp: new Date().toISOString()
+        });
+        return {
+            confidence: 0,
+            method: 'error',
+            issues: [error.message]
+        };
+    }
+}
+async function extractRecipeFromHtml(url, html) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    try {
+        const cached = await getRecipeFromCache(url);
+        if (cached) {
+            console.log('Scrape debug: cache hit', { url });
+            return cached;
+        }
+        const $ = cheerio.load(html);
+        console.log('Scrape debug: Starting modular scraper extraction (html)', {
+            url,
+            htmlLength: (html === null || html === void 0 ? void 0 : html.length) || 0
+        });
+        const scraperManager = new ScraperManager_1.ScraperManager();
+        const result = await scraperManager.scrapeRecipe(url, $, html);
+        console.log('Scrape debug: Scraper result (html)', {
+            confidence: result.confidence,
+            method: result.method,
+            hasRecipe: !!result.recipe,
+            title: (_a = result.recipe) === null || _a === void 0 ? void 0 : _a.title,
+            issues: result.issues
+        });
+        if (result.recipe && result.confidence > 0.3) {
+            if (!result.recipe.image) {
+                result.recipe.image = extractImageFromMetaTags($);
+            }
+            try {
+                const validated = validateAndCleanRecipe(result.recipe, url);
+                if (validated) {
+                    console.log('Scrape debug: Modular scraper success (html)', {
+                        title: validated.title,
+                        method: result.method,
+                        confidence: result.confidence,
+                        hasImage: !!validated.image,
+                        ingredientCount: validated.ingredients.length,
+                        instructionCount: validated.instructions.length
+                    });
+                    await saveRecipeToCache(url, validated);
+                    return validated;
+                }
+            }
+            catch (error) {
+                console.warn('Scrape debug: Modular scraper validation failed (html)', {
+                    error: error instanceof Error ? error.message : String(error),
+                    method: result.method,
+                    confidence: result.confidence
+                });
+            }
+        }
+        console.log('Scrape debug: Falling back to AI extraction (html)', {
+            reason: result.confidence < 0.3 ? 'low_confidence' : 'validation_failed',
+            confidence: result.confidence,
+            candidateTitle: (_b = result.recipe) === null || _b === void 0 ? void 0 : _b.title,
+            hasIngredients: !!((_d = (_c = result.recipe) === null || _c === void 0 ? void 0 : _c.ingredients) === null || _d === void 0 ? void 0 : _d.length),
+            hasInstructions: !!((_f = (_e = result.recipe) === null || _e === void 0 ? void 0 : _e.instructions) === null || _f === void 0 ? void 0 : _f.length)
+        });
+        try {
+            const enhancedAI = new enhancedAIService_1.EnhancedAIService();
+            let fallbackLevel = 'detailed';
+            if (result.confidence > 0.2 && ((_g = result.recipe) === null || _g === void 0 ? void 0 : _g.title)) {
+                fallbackLevel = 'fast';
+            }
+            else if (result.confidence < 0.05 || !result.recipe) {
+                fallbackLevel = 'aggressive';
+            }
+            const aiResult = await enhancedAI.extractRecipeWithAI(url, html, {
+                hints: {
+                    title: (_h = result.recipe) === null || _h === void 0 ? void 0 : _h.title,
+                    ingredients: (_j = result.recipe) === null || _j === void 0 ? void 0 : _j.ingredients,
+                    partialInstructions: (_k = result.recipe) === null || _k === void 0 ? void 0 : _k.instructions
+                },
+                fallbackLevel,
+                includePartialData: true
+            });
+            console.log('Scrape debug: Enhanced AI fallback (html)', {
+                method: aiResult.method,
+                confidence: aiResult.confidence,
+                processingTime: aiResult.processingTime,
+                tokensUsed: aiResult.tokensUsed
+            });
+            const fallback = Object.assign(Object.assign({}, aiResult.recipe), { sourceUrl: url });
+            await saveRecipeToCache(url, fallback);
+            return fallback;
+        }
+        catch (aiError) {
+            console.error('Scrape debug: Enhanced AI fallback failed (html)', {
+                error: aiError instanceof Error ? aiError.message : String(aiError)
+            });
+            if (result.recipe && (result.recipe.title || ((_l = result.recipe.ingredients) === null || _l === void 0 ? void 0 : _l.length))) {
+                throw new Error(`Partial recipe data found but incomplete. Issues: ${((_m = result.issues) === null || _m === void 0 ? void 0 : _m.join(', ')) || 'Unknown'}`);
+            }
+            throw new Error('No recipe data found on this page and AI extraction failed');
+        }
+    }
+    catch (error) {
+        console.error('Error in extractRecipeFromHtml:', {
+            message: error instanceof Error ? error.message : String(error),
+            url,
+            timestamp: new Date().toISOString()
+        });
+        if (error instanceof Error) {
+            throw error;
+        }
+        throw new Error('An unexpected error occurred while processing the recipe page');
+    }
+}
 async function extractRecipeFromUrl(url) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
     try {
@@ -514,6 +727,44 @@ async function extractRecipeFromUrl(url) {
             throw new Error('An unexpected error occurred while processing the recipe page');
         }
     }
+}
+function normalizeRecipeDraft(recipe, sourceUrl) {
+    const title = typeof (recipe === null || recipe === void 0 ? void 0 : recipe.title) === 'string' ? recipe.title.trim() : '';
+    const ingredients = Array.isArray(recipe === null || recipe === void 0 ? void 0 : recipe.ingredients) ? recipe.ingredients.filter(Boolean) : [];
+    const instructions = Array.isArray(recipe === null || recipe === void 0 ? void 0 : recipe.instructions)
+        ? recipe.instructions.filter(Boolean)
+        : Array.isArray(recipe === null || recipe === void 0 ? void 0 : recipe.steps)
+            ? recipe.steps.map((step) => (step === null || step === void 0 ? void 0 : step.step) || step).filter(Boolean)
+            : [];
+    const draft = {
+        title,
+        description: typeof (recipe === null || recipe === void 0 ? void 0 : recipe.description) === 'string' ? recipe.description : '',
+        image: typeof (recipe === null || recipe === void 0 ? void 0 : recipe.image) === 'string' ? recipe.image : '',
+        prepTime: recipe === null || recipe === void 0 ? void 0 : recipe.prepTime,
+        cookTime: recipe === null || recipe === void 0 ? void 0 : recipe.cookTime,
+        totalTime: recipe === null || recipe === void 0 ? void 0 : recipe.totalTime,
+        servings: recipe === null || recipe === void 0 ? void 0 : recipe.servings,
+        difficulty: recipe === null || recipe === void 0 ? void 0 : recipe.difficulty,
+        ingredients,
+        instructions,
+        sourceUrl,
+        tags: Array.isArray(recipe === null || recipe === void 0 ? void 0 : recipe.tags) ? recipe.tags : []
+    };
+    const issues = [];
+    const hasTitle = title.length > 0;
+    const hasSteps = instructions.length > 0;
+    const hasIngredients = ingredients.length > 0;
+    if (!hasTitle)
+        issues.push('missing_title');
+    if (!hasSteps)
+        issues.push('missing_steps');
+    if (!hasIngredients)
+        issues.push('missing_ingredients');
+    if (!hasTitle && !hasSteps) {
+        return { recipe: draft, status: 'not_recipe', issues };
+    }
+    const status = hasTitle && hasSteps && hasIngredients ? 'complete' : 'needs_review';
+    return { recipe: draft, status, issues };
 }
 function extractImageFromMetaTags($) {
     // Priority order: og:image, twitter:image, fallback image selectors
@@ -1223,7 +1474,7 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
         // Verify the Firebase token
         const decodedToken = await admin.auth().verifyIdToken(token);
         console.log('Authenticated user:', decodedToken.uid, decodedToken.email);
-        const { url } = req.body;
+        const { url, html } = req.body;
         if (!url) {
             res.status(400).json({ error: 'URL is required' });
             return;
@@ -1234,55 +1485,98 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
         }
         // Check rate limits using improved rolling window system
         await checkRateLimit(decodedToken.uid, 'import');
+        const htmlPayload = typeof html === 'string' && html.trim().length > 0 ? html : undefined;
         // Check global recipe cache first
         const cachedRecipe = await getRecipeFromCache(url);
         let recipe;
+        let status = 'complete';
+        let issues = [];
+        let confidence = 1.0;
+        let method = 'cache';
         if (cachedRecipe) {
             console.log('Recipe found in cache:', url);
-            recipe = cachedRecipe;
+            const normalized = normalizeRecipeDraft(cachedRecipe, url);
+            recipe = normalized.recipe;
+            status = normalized.status;
+            issues = normalized.issues;
+            confidence = 1.0;
+            method = 'cache';
         }
         else {
-            console.log('Recipe not in cache, scraping:', url);
-            // Get detailed scraper result for partial success handling
-            const scraperResult = await extractRecipeWithDetails(url);
-            if (scraperResult.recipe && scraperResult.confidence > 0.7) {
-                // Full success - high confidence means we have a complete recipe
-                recipe = scraperResult.recipe;
-                await saveRecipeToCache(url, recipe);
-                // Server-side validation
-                await validateRecipeData(recipe);
+            console.log('Recipe not in cache, scraping:', { url, hasHtml: !!htmlPayload });
+            const scraperResult = htmlPayload
+                ? await extractRecipeWithDetailsFromHtml(url, htmlPayload)
+                : await extractRecipeWithDetails(url);
+            if (scraperResult.recipe) {
+                const normalized = normalizeRecipeDraft(scraperResult.recipe, url);
+                recipe = normalized.recipe;
+                status = normalized.status;
+                issues = normalized.issues.concat(scraperResult.issues || []);
+                confidence = scraperResult.confidence;
+                method = scraperResult.method;
+                if (status === 'not_recipe') {
+                    res.status(400).json({
+                        error: 'Not a recipe',
+                        message: 'No recipe data found on this page',
+                        canRetry: false
+                    });
+                    return;
+                }
+                if (recipe.title) {
+                    await saveRecipeToCache(url, recipe);
+                }
                 res.json({
-                    success: true,
-                    recipe: recipe,
-                    confidence: scraperResult.confidence,
-                    method: scraperResult.method
+                    status,
+                    recipe,
+                    confidence,
+                    method,
+                    issues
                 });
                 return;
             }
-            else if (scraperResult.recipe && scraperResult.confidence > 0.2) {
-                // Partial success - return for review
+            // Low confidence or failed scrape - try AI/legacy extraction path
+            try {
+                const aiFallback = htmlPayload
+                    ? await extractRecipeFromHtml(url, htmlPayload)
+                    : await extractRecipeFromUrl(url);
+                const normalized = normalizeRecipeDraft(aiFallback, url);
+                recipe = normalized.recipe;
+                status = normalized.status;
+                issues = normalized.issues;
+                confidence = 0.5;
+                method = 'ai-fallback';
+                if (status === 'not_recipe') {
+                    res.status(400).json({
+                        error: 'Not a recipe',
+                        message: 'No recipe data found on this page',
+                        canRetry: false
+                    });
+                    return;
+                }
+                if (recipe.title) {
+                    await saveRecipeToCache(url, recipe);
+                }
                 res.json({
-                    success: false,
-                    partialSuccess: true,
-                    recipe: scraperResult.recipe,
-                    confidence: scraperResult.confidence,
-                    method: scraperResult.method,
-                    issues: scraperResult.issues || []
+                    status,
+                    recipe,
+                    confidence,
+                    method,
+                    issues
                 });
                 return;
             }
-            else {
+            catch (fallbackError) {
                 // Complete failure
                 throw new Error(`Failed to extract recipe. ${((_a = scraperResult.issues) === null || _a === void 0 ? void 0 : _a.join(', ')) || 'Unknown error'}`);
             }
         }
-        // This should not be reached for non-cached recipes now
-        // Server-side validation for cached recipes
-        await validateRecipeData(recipe);
         // Return recipe data without saving to user collection
         res.json({
-            success: true,
-            recipe: recipe
+            status,
+            recipe,
+            confidence,
+            method,
+            issues
         });
     }
     catch (error) {
@@ -1393,6 +1687,113 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
             canRetry: true,
             allowManualEdit: true,
             suggestion: 'Please try again or enter the recipe manually. Contact support if the problem persists.'
+        });
+    }
+});
+// HTTP endpoint to save an imported recipe from the share extension
+exports.saveImportedRecipeHttp = functions.https.onRequest(async (req, res) => {
+    var _a;
+    try {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'POST');
+        res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        if (req.method === 'OPTIONS') {
+            res.status(204).send('');
+            return;
+        }
+        if (req.method !== 'POST') {
+            res.status(405).json({ error: 'Method not allowed' });
+            return;
+        }
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            res.status(401).json({ error: 'Missing or invalid authorization header' });
+            return;
+        }
+        const token = authHeader.split('Bearer ')[1];
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        const recipe = (_a = req.body) === null || _a === void 0 ? void 0 : _a.recipe;
+        if (!recipe || typeof recipe !== 'object') {
+            res.status(400).json({ error: 'Recipe data is required' });
+            return;
+        }
+        let title = typeof recipe.title === 'string' ? recipe.title.trim() : '';
+        const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+        const instructions = Array.isArray(recipe.instructions) ? recipe.instructions : [];
+        const sourceUrl = recipe.sourceUrl || recipe.url;
+        const importStatus = recipe.importStatus === 'needs_review' ? 'needs_review' : 'complete';
+        const importIssues = Array.isArray(recipe.importIssues) ? recipe.importIssues : [];
+        const importConfidence = typeof recipe.importConfidence === 'number' ? recipe.importConfidence : undefined;
+        if (!title) {
+            title = 'Untitled Recipe';
+        }
+        if (!ingredients.length && !instructions.length) {
+            res.status(400).json({
+                error: 'Invalid recipe data',
+                message: 'Recipe must include a title and at least ingredients or instructions.'
+            });
+            return;
+        }
+        const parentProfiles = await admin.firestore()
+            .collection('parentProfiles')
+            .where('userId', '==', decodedToken.uid)
+            .limit(1)
+            .get();
+        if (parentProfiles.empty) {
+            res.status(400).json({
+                error: 'Parent profile missing',
+                message: 'Please complete your parent profile before saving recipes.'
+            });
+            return;
+        }
+        const parentProfileId = parentProfiles.docs[0].id;
+        const now = admin.firestore.Timestamp.now();
+        const recipeData = {
+            title,
+            description: recipe.description || '',
+            image: recipe.image || '',
+            servings: recipe.servings || 0,
+            prepTime: recipe.prepTime || '',
+            cookTime: recipe.cookTime || '',
+            totalTime: recipe.totalTime || '',
+            difficulty: recipe.difficulty || '',
+            cuisine: recipe.cuisine || '',
+            mealType: recipe.mealType || '',
+            ingredients,
+            instructions,
+            url: sourceUrl || '',
+            tags: Array.isArray(recipe.tags) ? recipe.tags : [],
+            importStatus,
+            importIssues,
+            importConfidence,
+            userId: decodedToken.uid,
+            parentId: parentProfileId,
+            createdAt: now,
+            updatedAt: now,
+        };
+        const docRef = await admin.firestore().collection('recipes').add(recipeData);
+        res.json({
+            success: true,
+            recipeId: docRef.id
+        });
+    }
+    catch (error) {
+        console.error('Error in saveImportedRecipeHttp:', {
+            message: error.message,
+            code: error.code,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        });
+        if (error.code === 'auth/id-token-expired' || error.code === 'auth/id-token-revoked') {
+            res.status(401).json({
+                error: 'Authentication expired',
+                message: 'Please log in again to continue',
+            });
+            return;
+        }
+        res.status(500).json({
+            error: 'Save failed',
+            message: 'Failed to save recipe'
         });
     }
 });
@@ -1939,8 +2340,9 @@ async function refineRecipeWithAI(recipe, kidAge, readingLevel, refinementInstru
     var _a, _b, _c, _d, _e;
     try {
         const apiKey = ((_a = functions.config().openai) === null || _a === void 0 ? void 0 : _a.api_key) || process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-            throw new Error('OpenAI API key not configured');
+        if (!apiKey || !openai) {
+            console.warn('⚠️ OpenAI not available - returning original recipe without refinement');
+            return recipe; // Return original recipe without AI refinement
         }
         const prompt = `RECIPE REFINEMENT REQUEST (Attempt ${regenerationCount + 1})
 
@@ -2264,6 +2666,10 @@ async function createKidRecipeFromCache(recipeId, kidAge, readingLevel, cached, 
 }
 async function convertRecipeWithAI(recipe, kidAge, readingLevel, allergyFlags) {
     var _a, _b;
+    if (!openai) {
+        console.warn('⚠️ OpenAI not available - cannot convert recipe to kid-friendly version');
+        throw new Error('AI conversion service not available - OpenAI API key not configured');
+    }
     const prompt = `Convert this recipe to be kid-friendly for a ${kidAge}-year-old with ${readingLevel} reading level.
 
 Original Recipe:
@@ -2571,7 +2977,7 @@ exports.reportUnclearStep = functions.https.onCall(async (data, context) => {
     }
 });
 async function triggerStepRefinement(kidRecipeId, stepIndex, feedback) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     try {
         const kidRecipeRef = admin.firestore().collection('kidRecipes').doc(kidRecipeId);
         const kidRecipeDoc = await kidRecipeRef.get();
@@ -2609,9 +3015,12 @@ Requirements:
 
 Respond with only the improved step text, nothing else.
     `.trim();
-        const openai = new openai_1.default({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        const apiKey = ((_a = functions.config().openai) === null || _a === void 0 ? void 0 : _a.api_key) || process.env.OPENAI_API_KEY;
+        if (!apiKey || !openai) {
+            console.warn('⚠️ OpenAI not available - returning original step without refinement');
+            // Return original step without refinement
+            return step.kidFriendlyText || step.step;
+        }
         const completion = await Promise.race([
             openai.chat.completions.create({
                 model: 'gpt-4',
@@ -2622,7 +3031,7 @@ Respond with only the improved step text, nothing else.
             // Timeout after 60 seconds for this shorter operation
             new Promise((_, reject) => setTimeout(() => reject(new Error('OpenAI API timeout after 60 seconds')), 60000))
         ]);
-        const improvedStepText = (_c = (_b = (_a = completion.choices[0]) === null || _a === void 0 ? void 0 : _a.message) === null || _b === void 0 ? void 0 : _b.content) === null || _c === void 0 ? void 0 : _c.trim();
+        const improvedStepText = (_d = (_c = (_b = completion.choices[0]) === null || _b === void 0 ? void 0 : _b.message) === null || _c === void 0 ? void 0 : _c.content) === null || _d === void 0 ? void 0 : _d.trim();
         if (!improvedStepText) {
             throw new Error('Failed to generate improved step text');
         }

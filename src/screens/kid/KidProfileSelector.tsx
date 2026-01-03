@@ -64,9 +64,17 @@ export default function KidProfileSelector({ onKidSelected, onExitKidMode }: Kid
     }
   };
 
-  const handlePinSuccess = async () => {
+  const handlePinSuccess = async (pin?: string) => {
+    const success = await setDeviceModeWithPin('parent', pin);
+    if (success) {
+      setShowPinInput(false);
+      onExitKidMode();
+      return;
+    }
+
     setShowPinInput(false);
-    onExitKidMode();
+    Alert.alert('Incorrect PIN', 'That PIN is not correct. Please try again.');
+    setTimeout(() => setShowPinInput(true), 100);
   };
 
   return (
@@ -150,7 +158,7 @@ export default function KidProfileSelector({ onKidSelected, onExitKidMode }: Kid
         onSuccess={handlePinSuccess}
         title="Parent PIN Required"
         subtitle="Enter your PIN to access Parent Mode"
-        correctPin={parentProfile?.kidModePin || ''}
+        mode="input"
       />
     </SafeAreaView>
   );

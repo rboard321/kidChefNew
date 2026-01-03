@@ -20,6 +20,7 @@ import { kidProgressService } from '../../services/kidProgressService';
 import { recipeFavoritesService } from '../../services/recipeFavorites';
 import { BadgeNotification } from '../../components/BadgeNotification';
 import PinInput from '../../components/PinInput';
+import { verifyPin } from '../../utils/pinSecurity';
 import type { KidRecipe, Recipe, KidBadge } from '../../types';
 
 type RecipeViewParams = { recipeId: string; kidId?: string };
@@ -332,7 +333,21 @@ export default function RecipeViewScreen() {
     }
   };
 
-  const handleParentVerificationSuccess = () => {
+  const handleParentVerificationSuccess = async (pin?: string) => {
+    const storedPin = parentProfile?.kidModePin;
+    if (!storedPin || !pin) {
+      setShowParentVerification(false);
+      return;
+    }
+
+    const isValid = await verifyPin(pin, storedPin);
+    if (!isValid) {
+      setShowParentVerification(false);
+      Alert.alert('Incorrect PIN', 'That PIN is not correct. Please try again.');
+      setTimeout(() => setShowParentVerification(true), 100);
+      return;
+    }
+
     setShowParentVerification(false);
     confirmedRecipeCompletion();
   };
@@ -570,7 +585,7 @@ export default function RecipeViewScreen() {
         onSuccess={handleParentVerificationSuccess}
         title="Parent Verification Required"
         subtitle="Enter your PIN to verify the recipe was completed"
-        correctPin={parentProfile?.kidModePin || ''}
+        mode="input"
       />
     </SafeAreaView>
   );

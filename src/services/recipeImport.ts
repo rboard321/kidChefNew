@@ -166,6 +166,9 @@ export const recipeImportService: RecipeImportService = {
         // Environment-aware Cloud Function URL selection
         const environment = process.env.EXPO_PUBLIC_ENVIRONMENT || 'development';
         const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+        if (!projectId) {
+          throw new Error('Missing EXPO_PUBLIC_FIREBASE_PROJECT_ID for recipe import');
+        }
 
         // Use environment-specific Cloud Functions
         const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/importRecipeHttp`;
@@ -221,7 +224,7 @@ export const recipeImportService: RecipeImportService = {
           console.log('HTTP result:', result);
         }
 
-        if (result.success) {
+        if (result.status === 'complete') {
           onProgress?.(ImportStatus.COMPLETE);
 
           return {
@@ -230,7 +233,7 @@ export const recipeImportService: RecipeImportService = {
             confidence: result.confidence,
             extractionMethod: result.method
           };
-        } else if (result.partialSuccess && result.confidence > 0.2) {
+        } else if (result.status === 'needs_review' && result.recipe) {
           // Handle partial success - enough data for review
           onProgress?.(ImportStatus.COMPLETE);
 
@@ -271,6 +274,15 @@ export const recipeImportService: RecipeImportService = {
                 }
               ]
             },
+            confidence: result.confidence,
+            extractionMethod: result.method
+          };
+        } else if (result.success) {
+          onProgress?.(ImportStatus.COMPLETE);
+
+          return {
+            success: true,
+            recipe: result.recipe,
             confidence: result.confidence,
             extractionMethod: result.method
           };

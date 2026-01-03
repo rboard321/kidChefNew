@@ -10,7 +10,15 @@ export type AppVariant = 'dev' | 'staging' | 'production';
  * Get the current environment
  * Uses EXPO_PUBLIC_ENVIRONMENT which is available at runtime in React Native
  */
+import Constants from 'expo-constants';
+
 export const getEnvironment = (): Environment => {
+  const configEnv = (Constants.expoConfig?.extra?.environment ||
+    (Constants.manifest as any)?.extra?.environment) as Environment | undefined;
+  if (configEnv && ['development', 'staging', 'production'].includes(configEnv)) {
+    return configEnv;
+  }
+
   // Use EXPO_PUBLIC_ENVIRONMENT as primary source (available at runtime in React Native)
   const expoEnv = process.env.EXPO_PUBLIC_ENVIRONMENT as Environment;
   if (expoEnv && ['development', 'staging', 'production'].includes(expoEnv)) {
@@ -31,7 +39,9 @@ export const getEnvironment = (): Environment => {
  * Get the current app variant
  */
 export const getAppVariant = (): AppVariant => {
-  return (process.env.EXPO_PUBLIC_APP_VARIANT as AppVariant) || 'dev';
+  const configVariant = (Constants.expoConfig?.extra?.appVariant ||
+    (Constants.manifest as any)?.extra?.appVariant) as AppVariant | undefined;
+  return configVariant || (process.env.EXPO_PUBLIC_APP_VARIANT as AppVariant) || 'dev';
 };
 
 /**

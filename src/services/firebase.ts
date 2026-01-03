@@ -26,17 +26,27 @@ const getFirebaseConfig = () => {
 
   // Environment-specific Firebase configuration using env variables
   const config = {
-    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || "AIzaSyDTcvNJbdVkoICXZwg78Sh9lIks4j_XWvo",
-    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || "kidchef.firebaseapp.com",
-    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "kidchef",
-    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET || "kidchef.firebasestorage.app",
-    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "198273265652",
-    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID || "1:198273265652:web:4a10431ff054f49e0fd3a1"
+    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID
   };
 
+  const expectedProjectId = environment === 'development'
+    ? 'kidchef-dev'
+    : environment === 'staging'
+      ? 'kidchef-staging'
+      : 'kidchef';
+
   // Validate required config values
-  if (!config.apiKey || !config.projectId || !config.authDomain) {
+  if (!config.apiKey || !config.projectId || !config.authDomain || !config.appId) {
     throw new Error('Firebase configuration is incomplete. Missing required fields.');
+  }
+
+  if (config.projectId !== expectedProjectId) {
+    throw new Error(`Environment/Project ID mismatch: Expected ${expectedProjectId}, got ${config.projectId}`);
   }
 
   return config;

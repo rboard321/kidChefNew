@@ -6,15 +6,47 @@ import {
   TouchableOpacity,
   Switch,
   ScrollView,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../../contexts/AuthContext';
+import { BugReportModal } from '../../components/BugReportModal';
+import { featureFlags, getAppVersionString } from '../../utils/environment';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../types';
 
 export default function SettingsScreen() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { signOut } = useAuth();
   const [safetyNotes, setSafetyNotes] = useState(true);
   const [readAloud, setReadAloud] = useState(true);
   const [autoSimplify, setAutoSimplify] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
+  const [bugReportVisible, setBugReportVisible] = useState(false);
+
+  const showBugReport = featureFlags.betaTestingMode || featureFlags.enableFeedbackCollection;
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Sign out failed:', error);
+      Alert.alert('Sign Out Failed', 'Please try again.');
+    }
+  };
+
+  const confirmSignOut = () => {
+    Alert.alert(
+      'Sign Out',
+      'You will need to sign in again to access your account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign Out', style: 'destructive', onPress: () => void handleSignOut() },
+      ]
+    );
+  };
 
   const SettingItem = ({
     title,
@@ -146,6 +178,18 @@ export default function SettingsScreen() {
           />
 
           <ActionButton
+            title="Privacy Policy"
+            icon="🔒"
+            onPress={() => navigation.navigate('PrivacyPolicy')}
+          />
+
+          <ActionButton
+            title="Terms of Service"
+            icon="📜"
+            onPress={() => navigation.navigate('TermsOfService')}
+          />
+
+          <ActionButton
             title="Contact Support"
             icon="💬"
             onPress={() => console.log('Contact support')}
@@ -156,24 +200,37 @@ export default function SettingsScreen() {
             icon="⭐"
             onPress={() => console.log('Rate app')}
           />
+
+          {showBugReport && (
+            <ActionButton
+              title="Report a Bug (Beta)"
+              icon="🐞"
+              onPress={() => setBugReportVisible(true)}
+            />
+          )}
         </View>
 
         <View style={styles.section}>
           <ActionButton
             title="Sign Out"
             icon="🚪"
-            onPress={() => console.log('Sign out')}
+            onPress={confirmSignOut}
             color="#ef4444"
           />
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>KidChef v1.0.0</Text>
+          <Text style={styles.footerText}>KidChef {getAppVersionString()}</Text>
           <Text style={styles.footerSubtext}>
             Made with ❤️ for families who love to cook together
           </Text>
         </View>
       </ScrollView>
+      <BugReportModal
+        visible={bugReportVisible}
+        onClose={() => setBugReportVisible(false)}
+        prefilledContext={{ screen: 'settings' }}
+      />
     </SafeAreaView>
   );
 }

@@ -9,8 +9,10 @@ import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import { parentalConsentService, type ConsentStatus } from '../services/parentalConsent';
 import { sendAccountCreationNotice, sendKidProfileNotice } from '../services/parentalNotice';
 import { onSnapshot, doc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import type { ParentProfile, KidProfile } from '../types';
+import { clearSharedAuthToken, setSharedAuthToken } from '../utils/sharedAuthToken';
 
 interface AuthContextType {
   user: User | null;
@@ -19,11 +21,21 @@ interface AuthContextType {
   currentKid: KidProfile | null;
   deviceMode: 'parent' | 'kid';
   consentStatus: ConsentStatus;
+  legalAcceptance: {
+    termsAcceptedAt: Date;
+    privacyPolicyAcceptedAt: Date;
+    coppaDisclosureAccepted: boolean;
+  } | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signUp: (email: string, password: string, profile: Partial<ParentProfile>) => Promise<void>;
   signOut: () => Promise<void>;
+  setLegalAcceptance: (acceptance: {
+    termsAcceptedAt: Date;
+    privacyPolicyAcceptedAt: Date;
+    coppaDisclosureAccepted: boolean;
+  }) => void;
   setDeviceMode: (mode: 'parent' | 'kid') => void;
   setDeviceModeWithPin: (mode: 'parent' | 'kid', pin?: string) => Promise<boolean>;
   selectKid: (kidId: string | null) => void;
@@ -35,6 +47,8 @@ interface AuthContextType {
   updateKid: (kidId: string, updates: Partial<KidProfile>) => Promise<void>;
   removeKid: (kidId: string) => Promise<void>;
   checkAndRunMigration: () => Promise<boolean>;
+  checkConsentStatus: () => Promise<void>;
+  trackActivity: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -53,7 +67,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [kidProfiles, setKidProfiles] = useState<KidProfile[]>([]);
   const [currentKid, setCurrentKid] = useState<KidProfile | null>(null);
   const [deviceMode, setDeviceMode] = useState<'parent' | 'kid'>('parent');
+  const [consentStatus, setConsentStatus] = useState<ConsentStatus>('pending');
   const [loading, setLoading] = useState(true);
+  const [legalAcceptance, setLegalAcceptanceState] = useState<{
+    termsAcceptedAt: Date;
+    privacyPolicyAcceptedAt: Date;
+    coppaDisclosureAccepted: boolean;
+  } | null>(null);
+  const legalAcceptanceStorageKey = 'kidchef.legalAcceptance';
+
+  // Session timeout hook for automatic logout after inactivity
+  const { trackActivity, clearSession } = useSessionTimeout({
+    timeoutDuration: 15 * 60 * 1000, // 15 minutes
+    onTimeout: async () => {
+      console.log('⏰ Session timeout - signing out user');
+      await signOut();
+    },
+    enabled: !!user,
+  });
+
+  useEffect(() => {
+    const loadAcceptance = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(legalAcceptanceStorageKey);
+        if (!stored) return;
+        const parsed = JSON.parse(stored) as {
+          termsAcceptedAt: string;
+          privacyPolicyAcceptedAt: string;
+          coppaDisclosureAccepted: boolean;
+        };
+        setLegalAcceptanceState({
+          termsAcceptedAt: new Date(parsed.termsAcceptedAt),
+          privacyPolicyAcceptedAt: new Date(parsed.privacyPolicyAcceptedAt),
+          coppaDisclosureAccepted: parsed.coppaDisclosureAccepted,
+        });
+      } catch (error) {
+        console.error('Error loading legal acceptance:', error);
+      }
+    };
+
+    loadAcceptance();
+  }, []);
+
+  const persistLegalAcceptance = async (acceptance: {
+    termsAcceptedAt: Date;
+    privacyPolicyAcceptedAt: Date;
+    coppaDisclosureAccepted: boolean;
+  }) => {
+    const payload = JSON.stringify({
+      termsAcceptedAt: acceptance.termsAcceptedAt.toISOString(),
+      privacyPolicyAcceptedAt: acceptance.privacyPolicyAcceptedAt.toISOString(),
+      coppaDisclosureAccepted: acceptance.coppaDisclosureAccepted,
+    });
+    await AsyncStorage.setItem(legalAcceptanceStorageKey, payload);
+  };
+
+  const setLegalAcceptance = (acceptance: {
+    termsAcceptedAt: Date;
+    privacyPolicyAcceptedAt: Date;
+    coppaDisclosureAccepted: boolean;
+  }) => {
+    setLegalAcceptanceState(acceptance);
+    persistLegalAcceptance(acceptance).catch((error) => {
+      console.error('Error saving legal acceptance:', error);
+    });
+  };
 
   const loadUserProfile = async (user: User) => {
     try {
@@ -77,9 +155,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const checkConsentStatus = async () => {
+    if (!user) return;
+
+    try {
+      const status = await parentalConsentService.checkConsentStatus(user.uid);
+      setConsentStatus(status);
+    } catch (error) {
+      console.error('Error checking consent status:', error);
+      setConsentStatus('pending');
+    }
+  };
+
   const refreshProfile = async () => {
     if (user) {
       await loadUserProfile(user);
+      await checkConsentStatus();
     }
   };
 
@@ -88,8 +179,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(user);
 
       if (user) {
+        user.getIdToken().then(setSharedAuthToken).catch((error) => {
+          console.error('Failed to store shared auth token:', error);
+        });
         await loadUserProfile(user);
+        await checkConsentStatus();
       } else {
+        clearSharedAuthToken();
         setParentProfile(null);
         setKidProfiles([]);
         setCurrentKid(null);
@@ -222,6 +318,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Error sending account creation notice:', noticeError);
         // Don't fail signup if notice fails, but log it for follow-up
       }
+
+      await parentalConsentService.initiateConsent({
+        parentName: user.displayName || user.email?.split('@')[0] || 'Parent',
+        parentEmail: user.email || email,
+        method: 'digital_signature',
+        childrenInfo: []
+      });
     } catch (error) {
       setLoading(false);
 
@@ -249,6 +352,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
+      // Clear session timeout data before signing out
+      clearSession();
       await authService.signOut();
     } catch (error) {
       console.error('Error signing out:', error);
@@ -282,12 +387,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!parentProfile) throw new Error('No parent profile found');
 
+      // Validate PIN format
+      if (!validatePinFormat(pin)) {
+        throw new Error('PIN must be 4-6 digits');
+      }
+
       // Hash the PIN before storing
       console.log('📝 Setting new PIN for parent profile:', parentProfile.id);
       const hashedPin = await hashPin(pin);
       console.log('📝 About to store hashed PIN:', hashedPin.substring(0, 20) + '...');
 
-      await parentProfileService.updateParentProfile(targetParent.id, { kidModePin: pin });
+      // Store the HASHED PIN, not the plain text
+      await parentProfileService.updateParentProfile(targetParent.id, { kidModePin: hashedPin });
       await refreshProfile();
     } catch (error) {
       console.error('Error setting kid mode PIN:', error);
@@ -300,7 +411,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!parentProfile) throw new Error('No parent profile found');
 
     try {
-      await parentProfileService.updateParentProfile(parentProfile.id, { kidModePin: newPin });
+      // Validate PIN format
+      if (!validatePinFormat(newPin)) {
+        throw new Error('PIN must be 4-6 digits');
+      }
+
+      // Hash the new PIN before storing
+      const hashedPin = await hashPin(newPin);
+      await parentProfileService.updateParentProfile(parentProfile.id, { kidModePin: hashedPin });
       await refreshProfile();
     } catch (error) {
       console.error('Error changing PIN:', error);
@@ -318,10 +436,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // If switching from kid to parent mode, PIN is required
     if (mode === 'parent' && deviceMode === 'kid') {
-      const storedPin = parentProfile?.kidModePin;
+      const storedHashedPin = parentProfile?.kidModePin;
 
       // If no PIN is set, allow access (for backward compatibility)
-      if (!storedPin) {
+      if (!storedHashedPin) {
         setDeviceMode(mode);
         return true;
       }
@@ -331,7 +449,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false; // PIN required but not provided
       }
 
-      if (pin !== storedPin) {
+      // Use secure PIN verification instead of plain text comparison
+      const isPinValid = await verifyPin(pin, storedHashedPin);
+      if (!isPinValid) {
+        const isLegacyPin = !storedHashedPin.includes(':') && /^\d{4,6}$/.test(storedHashedPin);
+        if (isLegacyPin && pin === storedHashedPin && parentProfile) {
+          const upgradedHash = await hashPin(pin);
+          await parentProfileService.updateParentProfile(parentProfile.id, { kidModePin: upgradedHash });
+          await refreshProfile();
+          setDeviceMode(mode);
+          return true;
+        }
         return false; // Invalid PIN
       }
     }
@@ -351,6 +479,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addKid = async (kidData: Omit<KidProfile, 'id' | 'parentId' | 'createdAt' | 'updatedAt'>) => {
     if (!user) throw new Error('No user logged in');
+    if (consentStatus !== 'verified') {
+      throw new Error('Parental consent is required before adding kids.');
+    }
 
     // Create parent profile if it doesn't exist
     if (!parentProfile) {
@@ -370,6 +501,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           enableVoiceInstructions: false,
           theme: 'light' as const,
         },
+        termsAcceptedAt: legalAcceptance?.termsAcceptedAt,
+        privacyPolicyAcceptedAt: legalAcceptance?.privacyPolicyAcceptedAt,
+        coppaDisclosureAccepted: legalAcceptance?.coppaDisclosureAccepted,
+        consentStatus,
         kidIds: [],
       };
 
@@ -476,20 +611,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 
   const checkAndRunMigration = async (): Promise<boolean> => {
-    if (!user) return false;
-
-    try {
-      const migrationNeeded = await migrationService.checkMigrationNeeded(user.uid);
-      if (migrationNeeded) {
-        await migrationService.migrateUserToMultiKid(user.uid);
-        await refreshProfile();
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Error during migration:', error);
-      throw error;
-    }
+    // Migration is not needed - user can reset data in test environment if needed
+    return false;
   };
 
   const value: AuthContextType = {
@@ -498,10 +621,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     kidProfiles,
     currentKid,
     deviceMode,
+    consentStatus,
+    legalAcceptance,
     loading,
     signIn,
     signUp,
     signOut,
+    setLegalAcceptance,
     setDeviceMode: (mode: 'parent' | 'kid') => {
       if (mode === 'kid') {
         setCurrentKid(null);
@@ -518,6 +644,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updateKid,
     removeKid,
     checkAndRunMigration,
+    checkConsentStatus,
+    trackActivity,
   };
 
   return (

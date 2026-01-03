@@ -10,18 +10,25 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../../contexts/AuthContext';
+import type { RootStackParamList } from '../../types';
 
 interface SignUpScreenProps {
   onSwitchToSignIn: () => void;
 }
 
 export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
+  const [acceptCoppa, setAcceptCoppa] = useState(false);
   const [loading, setLoading] = useState(false);
-  const { signUp } = useAuth();
+  const { signUp, setLegalAcceptance } = useAuth();
 
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim()) {
@@ -39,8 +46,22 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
       return;
     }
 
+    if (!acceptTerms || !acceptPrivacy || !acceptCoppa) {
+      Alert.alert(
+        'Consent Required',
+        'Please accept the Terms of Service, Privacy Policy, and COPPA disclosure to continue.'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
+      const acceptanceTimestamp = new Date();
+      setLegalAcceptance({
+        termsAcceptedAt: acceptanceTimestamp,
+        privacyPolicyAcceptedAt: acceptanceTimestamp,
+        coppaDisclosureAccepted: true,
+      });
       await signUp(email, password, {});
 
       // Show email verification success message
@@ -117,6 +138,61 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
             editable={!loading}
           />
 
+          <View style={styles.legalSection}>
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setAcceptTerms(!acceptTerms)}
+              disabled={loading}
+            >
+              <View style={[styles.checkbox, acceptTerms && styles.checkboxChecked]}>
+                {acceptTerms && <Text style={styles.checkboxMark}>✓</Text>}
+              </View>
+              <Text style={styles.checkboxLabel}>
+                I agree to the{' '}
+                <Text
+                  style={styles.linkText}
+                  onPress={() => navigation.navigate('TermsOfService')}
+                >
+                  Terms of Service
+                </Text>
+                .
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setAcceptPrivacy(!acceptPrivacy)}
+              disabled={loading}
+            >
+              <View style={[styles.checkbox, acceptPrivacy && styles.checkboxChecked]}>
+                {acceptPrivacy && <Text style={styles.checkboxMark}>✓</Text>}
+              </View>
+              <Text style={styles.checkboxLabel}>
+                I have read the{' '}
+                <Text
+                  style={styles.linkText}
+                  onPress={() => navigation.navigate('PrivacyPolicy')}
+                >
+                  Privacy Policy
+                </Text>
+                .
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.checkboxRow}
+              onPress={() => setAcceptCoppa(!acceptCoppa)}
+              disabled={loading}
+            >
+              <View style={[styles.checkbox, acceptCoppa && styles.checkboxChecked]}>
+                {acceptCoppa && <Text style={styles.checkboxMark}>✓</Text>}
+              </View>
+              <Text style={styles.checkboxLabel}>
+                I am the parent or legal guardian and acknowledge the COPPA disclosure.
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
             style={[styles.button, loading && styles.buttonDisabled]}
             onPress={handleSignUp}
@@ -186,6 +262,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#e5e7eb',
+  },
+  legalSection: {
+    marginTop: 20,
+    gap: 12,
+  },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#9ca3af',
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+  },
+  checkboxChecked: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  checkboxMark: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  checkboxLabel: {
+    flex: 1,
+    color: '#374151',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  linkText: {
+    color: '#2563eb',
+    fontWeight: '600',
   },
   button: {
     backgroundColor: '#2563eb',

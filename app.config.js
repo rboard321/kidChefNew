@@ -33,7 +33,7 @@ export default {
     slug: 'kidchef',
     version: '1.0.0',
     orientation: 'portrait',
-    icon: './assets/icon.png', // Will add environment-specific icons later
+    icon: './assets/kidChefIcon.png',
     userInterfaceStyle: 'light',
     newArchEnabled: true,
     scheme: getScheme(),
@@ -52,7 +52,7 @@ export default {
     },
     android: {
       adaptiveIcon: {
-        foregroundImage: './assets/adaptive-icon.png',
+        foregroundImage: './assets/kidChefIcon.png',
         backgroundColor: '#ffffff'
       },
       package: getBundleIdentifier(),

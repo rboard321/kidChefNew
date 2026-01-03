@@ -11,11 +11,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
+import PinInput from '../../components/PinInput';
 
 export default function KidSettingsScreen() {
   const navigation = useNavigation();
   const [readAloud, setReadAloud] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
+  const [showPinInput, setShowPinInput] = useState(false);
 
   const { currentKid, setDeviceModeWithPin, parentProfile } = useAuth();
 
@@ -23,11 +25,7 @@ export default function KidSettingsScreen() {
     const hasPinProtection = parentProfile?.kidModePin;
 
     if (hasPinProtection) {
-      Alert.alert(
-        'Exit Kid Mode',
-        'Ask your parent to enter the PIN to exit Kid Mode.',
-        [{ text: 'OK' }]
-      );
+      setShowPinInput(true);
     } else {
       Alert.alert(
         'Exit Kid Mode',
@@ -44,6 +42,18 @@ export default function KidSettingsScreen() {
         ]
       );
     }
+  };
+
+  const handlePinSuccess = async (pin?: string) => {
+    const success = await setDeviceModeWithPin('parent', pin);
+    if (success) {
+      setShowPinInput(false);
+      return;
+    }
+
+    setShowPinInput(false);
+    Alert.alert('Incorrect PIN', 'That PIN is not correct. Please try again.');
+    setTimeout(() => setShowPinInput(true), 100);
   };
 
   const SettingItem = ({
@@ -191,6 +201,14 @@ export default function KidSettingsScreen() {
           </Text>
         </View>
       </ScrollView>
+      <PinInput
+        visible={showPinInput}
+        onClose={() => setShowPinInput(false)}
+        onSuccess={handlePinSuccess}
+        title="Parent PIN Required"
+        subtitle="Enter your PIN to exit Kid Mode"
+        mode="input"
+      />
     </SafeAreaView>
   );
 }

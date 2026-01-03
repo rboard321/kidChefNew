@@ -197,8 +197,15 @@ export default function KidHomeScreen() {
   };
 
   const handlePinSuccess = async (pin?: string) => {
+    const success = await setDeviceModeWithPin('parent', pin);
+    if (success) {
+      setShowPinInput(false);
+      return;
+    }
+
     setShowPinInput(false);
-    await setDeviceModeWithPin('parent', pin);
+    Alert.alert('Incorrect PIN', 'That PIN is not correct. Please try again.');
+    setTimeout(() => setShowPinInput(true), 100);
   };
 
 
@@ -430,7 +437,7 @@ export default function KidHomeScreen() {
         onSuccess={handlePinSuccess}
         title="Parent PIN Required"
         subtitle="Enter your PIN to exit Kid Mode"
-        correctPin={parentProfile?.kidModePin || ''}
+        mode="input"
       />
     </SafeAreaView>
     </ErrorBoundary>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -6,46 +6,51 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRoute } from '@react-navigation/native';
+import { Image } from 'expo-image';
+import { recipeService } from '../../services/recipes';
+import type { Ingredient, Recipe } from '../../types';
+
+type RouteParams = { recipeId: string };
 
 export default function RecipeDetailScreen() {
-  const [servings, setServings] = useState(4);
+  const route = useRoute();
+  const { recipeId } = (route.params || {}) as RouteParams;
+  const [recipe, setRecipe] = useState<Recipe | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [servings, setServings] = useState(1);
 
-  const recipe = {
-    id: '1',
-    title: 'Chocolate Chip Cookies',
-    image: '🍪',
-    description: 'Classic homemade chocolate chip cookies that are crispy on the outside and chewy on the inside.',
-    prepTime: '15 min',
-    cookTime: '12 min',
-    totalTime: '27 min',
-    difficulty: 'Easy',
-    servings: 24,
-    sourceUrl: 'https://example.com/chocolate-chip-cookies',
-    ingredients: [
-      '2¼ cups all-purpose flour',
-      '1 tsp baking soda',
-      '1 tsp salt',
-      '1 cup butter, softened',
-      '¾ cup granulated sugar',
-      '¾ cup brown sugar',
-      '2 large eggs',
-      '2 tsp vanilla extract',
-      '2 cups chocolate chips',
-    ],
-    instructions: [
-      'Preheat oven to 375°F (190°C).',
-      'Mix flour, baking soda, and salt in a bowl.',
-      'In another bowl, cream butter and both sugars until fluffy.',
-      'Beat in eggs and vanilla.',
-      'Gradually add flour mixture.',
-      'Stir in chocolate chips.',
-      'Drop rounded tablespoons onto ungreased baking sheets.',
-      'Bake 9-11 minutes until golden brown.',
-      'Cool on baking sheet for 2 minutes, then transfer to wire rack.',
-    ],
-  };
+  useEffect(() => {
+    let isMounted = true;
+    const loadRecipe = async () => {
+      if (!recipeId) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const fetched = await recipeService.getRecipe(recipeId);
+        if (isMounted) {
+          setRecipe(fetched);
+          setServings(fetched?.servings || 1);
+        }
+      } catch (error) {
+        console.error('Failed to load recipe:', error);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadRecipe();
+    return () => {
+      isMounted = false;
+    };
+  }, [recipeId]);
 
   const scaleIngredient = (ingredient: string, scale: number) => {
     const match = ingredient.match(/^([\d\.\s\/]+)\s+(.+)/);
@@ -88,101 +93,160 @@ export default function RecipeDetailScreen() {
     );
   };
 
-  const scale = servings / recipe.servings;
+  const displayIngredients = useMemo(() => {
+    if (!recipe?.ingredients) return [];
+    return recipe.ingredients.map((ingredient) => {
+      if (typeof ingredient === 'string') return ingredient;
+      return formatIngredient(ingredient);
+    });
+  }, [recipe?.ingredients]);
+
+  const displaySteps = useMemo(() => {
+    if (recipe?.instructions?.length) return recipe.instructions;
+    if (recipe?.steps?.length) return recipe.steps.map((step) => step.step);
+    return [];
+  }, [recipe?.instructions, recipe?.steps]);
+
+  const scale = recipe?.servings ? servings / recipe.servings : 1;
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.emoji}>{recipe.image}</Text>
-          <Text style={styles.title}>{recipe.title}</Text>
-          <Text style={styles.description}>{recipe.description}</Text>
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3b82f6" />
+          <Text style={styles.loadingText}>Loading recipe...</Text>
+        </View>
+      ) : !recipe ? (
+        <View style={styles.loadingContainer}>
+          <Text style={styles.loadingText}>Recipe not found.</Text>
+        </View>
+      ) : (
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.header}>
+            {recipe.image?.startsWith('http') ? (
+              <Image source={{ uri: recipe.image }} style={styles.recipeImage} contentFit="cover" />
+            ) : (
+              <Text style={styles.emoji}>{recipe.image || '🍽️'}</Text>
+            )}
+            <Text style={styles.title}>{recipe.title}</Text>
+            {!!recipe.description && (
+              <Text style={styles.description}>{recipe.description}</Text>
+            )}
 
-          <View style={styles.infoGrid}>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Prep Time</Text>
-              <Text style={styles.infoValue}>{recipe.prepTime}</Text>
-            </View>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Cook Time</Text>
-              <Text style={styles.infoValue}>{recipe.cookTime}</Text>
-            </View>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Total Time</Text>
-              <Text style={styles.infoValue}>{recipe.totalTime}</Text>
-            </View>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Difficulty</Text>
-              <Text style={styles.infoValue}>{recipe.difficulty}</Text>
+            <View style={styles.infoGrid}>
+              {recipe.prepTime ? (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Prep Time</Text>
+                  <Text style={styles.infoValue}>{formatTime(recipe.prepTime)}</Text>
+                </View>
+              ) : null}
+              {recipe.cookTime ? (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Cook Time</Text>
+                  <Text style={styles.infoValue}>{formatTime(recipe.cookTime)}</Text>
+                </View>
+              ) : null}
+              {recipe.totalTime ? (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Total Time</Text>
+                  <Text style={styles.infoValue}>{formatTime(recipe.totalTime)}</Text>
+                </View>
+              ) : null}
+              {recipe.difficulty ? (
+                <View style={styles.infoItem}>
+                  <Text style={styles.infoLabel}>Difficulty</Text>
+                  <Text style={styles.infoValue}>{formatDifficulty(recipe.difficulty)}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
-        </View>
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Servings</Text>
-            <View style={styles.servingAdjuster}>
-              <TouchableOpacity
-                style={styles.adjustButton}
-                onPress={() => setServings(Math.max(1, servings - 1))}
-              >
-                <Text style={styles.adjustButtonText}>-</Text>
-              </TouchableOpacity>
-              <Text style={styles.servingsText}>{servings}</Text>
-              <TouchableOpacity
-                style={styles.adjustButton}
-                onPress={() => setServings(servings + 1)}
-              >
-                <Text style={styles.adjustButtonText}>+</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Ingredients</Text>
-          {recipe.ingredients.map((ingredient, index) => (
-            <View key={index} style={styles.ingredientItem}>
-              <Text style={styles.ingredientText}>
-                {scale !== 1 ? scaleIngredient(ingredient, scale) : ingredient}
-              </Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Instructions</Text>
-          {recipe.instructions.map((instruction, index) => (
-            <View key={index} style={styles.instructionItem}>
-              <View style={styles.stepNumber}>
-                <Text style={styles.stepNumberText}>{index + 1}</Text>
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Servings</Text>
+              <View style={styles.servingAdjuster}>
+                <TouchableOpacity
+                  style={styles.adjustButton}
+                  onPress={() => setServings(Math.max(1, servings - 1))}
+                >
+                  <Text style={styles.adjustButtonText}>-</Text>
+                </TouchableOpacity>
+                <Text style={styles.servingsText}>{servings}</Text>
+                <TouchableOpacity
+                  style={styles.adjustButton}
+                  onPress={() => setServings(servings + 1)}
+                >
+                  <Text style={styles.adjustButtonText}>+</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.instructionText}>{instruction}</Text>
             </View>
-          ))}
-        </View>
-
-        <View style={styles.actions}>
-          <TouchableOpacity style={styles.primaryButton} onPress={handleConvertToKidFriendly}>
-            <Text style={styles.primaryButtonText}>✨ Make Kid-Friendly</Text>
-          </TouchableOpacity>
-
-          <View style={styles.secondaryActions}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleShare}>
-              <Text style={styles.secondaryButtonText}>📤 Share</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleEdit}>
-              <Text style={styles.secondaryButtonText}>✏️ Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.secondaryButton, styles.deleteButton]} onPress={handleDelete}>
-              <Text style={[styles.secondaryButtonText, styles.deleteButtonText]}>🗑️ Delete</Text>
-            </TouchableOpacity>
           </View>
-        </View>
-      </ScrollView>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Ingredients</Text>
+            {displayIngredients.map((ingredient, index) => (
+              <View key={index} style={styles.ingredientItem}>
+                <Text style={styles.ingredientText}>
+                  {scale !== 1 ? scaleIngredient(ingredient, scale) : ingredient}
+                </Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Instructions</Text>
+            {displaySteps.map((instruction, index) => (
+              <View key={index} style={styles.instructionItem}>
+                <View style={styles.stepNumber}>
+                  <Text style={styles.stepNumberText}>{index + 1}</Text>
+                </View>
+                <Text style={styles.instructionText}>{instruction}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.actions}>
+            <TouchableOpacity style={styles.primaryButton} onPress={handleConvertToKidFriendly}>
+              <Text style={styles.primaryButtonText}>✨ Make Kid-Friendly</Text>
+            </TouchableOpacity>
+
+            <View style={styles.secondaryActions}>
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleShare}>
+                <Text style={styles.secondaryButtonText}>📤 Share</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleEdit}>
+                <Text style={styles.secondaryButtonText}>✏️ Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.secondaryButton, styles.deleteButton]} onPress={handleDelete}>
+                <Text style={[styles.secondaryButtonText, styles.deleteButtonText]}>🗑️ Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
+
+const formatDifficulty = (difficulty: Recipe['difficulty']) => {
+  if (!difficulty) return '';
+  return difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+};
+
+const formatTime = (value: Recipe['prepTime']) => {
+  if (typeof value === 'number') return `${value} min`;
+  return value;
+};
+
+const formatIngredient = (ingredient: Ingredient) => {
+  const parts = [
+    ingredient.amount ? String(ingredient.amount) : '',
+    ingredient.unit || '',
+    ingredient.name || '',
+    ingredient.notes ? `(${ingredient.notes})` : ''
+  ].filter(Boolean);
+  return parts.join(' ');
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -192,11 +256,28 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#6b7280',
+  },
   header: {
     backgroundColor: 'white',
     padding: 20,
     alignItems: 'center',
     marginBottom: 20,
+  },
+  recipeImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    marginBottom: 16,
   },
   emoji: {
     fontSize: 60,

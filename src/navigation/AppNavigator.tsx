@@ -9,10 +9,13 @@ import { ErrorBoundary, AuthErrorBoundary } from '../components/ErrorBoundary';
 
 // Auth screens
 import AuthScreen from '../screens/auth/AuthScreen';
+import PrivacyPolicyScreen from '../screens/auth/PrivacyPolicyScreen';
+import TermsOfServiceScreen from '../screens/auth/TermsOfServiceScreen';
 
 // Onboarding screens
 import WelcomeScreen from '../screens/onboarding/WelcomeScreen';
 import ParentSettingsScreen from '../screens/onboarding/ParentSettingsScreen';
+import ParentalConsentScreen from '../screens/onboarding/ParentalConsentScreen';
 
 // Parent screens
 import ParentHomeScreen from '../screens/parent/HomeScreen';
@@ -137,6 +140,20 @@ export default function AppNavigator() {
   const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode, consentStatus, checkConsentStatus } = useAuth();
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState(false);
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
+  const legalScreens = (
+    <>
+      <RootStack.Screen
+        name="PrivacyPolicy"
+        component={PrivacyPolicyScreen}
+        options={{ headerShown: true, title: 'Privacy Policy' }}
+      />
+      <RootStack.Screen
+        name="TermsOfService"
+        component={TermsOfServiceScreen}
+        options={{ headerShown: true, title: 'Terms of Service' }}
+      />
+    </>
+  );
 
   useEffect(() => {
     // Initialize deep linking service
@@ -173,32 +190,39 @@ export default function AppNavigator() {
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         {!user ? (
           // Not authenticated - show auth screen
-          <RootStack.Screen name="Auth">
-            {() => (
-              <AuthErrorBoundary>
-                <AuthScreen />
-              </AuthErrorBoundary>
-            )}
-          </RootStack.Screen>
+          <>
+            <RootStack.Screen name="Auth">
+              {() => (
+                <AuthErrorBoundary>
+                  <AuthScreen />
+                </AuthErrorBoundary>
+              )}
+            </RootStack.Screen>
+            {legalScreens}
+          </>
+        ) : consentStatus !== 'verified' ? (
+          // Authenticated but parental consent not verified - show consent screen
+          <>
+            <RootStack.Screen name="ParentalConsent">
+              {() => (
+                <ParentalConsentScreen
+                  onConsentVerified={() => {
+                    checkConsentStatus();
+                  }}
+                />
+              )}
+            </RootStack.Screen>
+            {legalScreens}
+          </>
         ) : !hasCompletedOnboarding ? (
-          // Temporarily skip parental consent for testing
-          // ) : consentStatus !== 'verified' ? (
-          //   // Authenticated but parental consent not verified - show consent screen
-          //   <RootStack.Screen name="ParentalConsent">
-          //     {() => (
-          //       <ParentalConsentScreen
-          //         onConsentVerified={() => {
-          //           checkConsentStatus();
-          //         }}
-          //       />
-          //     )}
-          //   </RootStack.Screen>
-          // ) : !hasCompletedOnboarding ? (
           // Authenticated but no profile - show onboarding
-          <RootStack.Screen
-            name="ParentSettings"
-            children={() => <ParentSettingsScreen onComplete={completeOnboarding} />}
-          />
+          <>
+            <RootStack.Screen
+              name="ParentSettings"
+              children={() => <ParentSettingsScreen onComplete={completeOnboarding} />}
+            />
+            {legalScreens}
+          </>
         ) : deviceMode === 'kid' ? (
           // Device is in Kid Mode - show kid stack
           <>
@@ -236,6 +260,7 @@ export default function AppNavigator() {
                 />
               </>
             )}
+            {legalScreens}
           </>
         ) : (
           // Device is in Parent Mode - show parent stack
@@ -268,6 +293,7 @@ export default function AppNavigator() {
                 title: 'Favorites'
               }}
             />
+            {legalScreens}
           </>
         )}
       </RootStack.Navigator>

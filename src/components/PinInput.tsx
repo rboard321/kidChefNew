@@ -161,12 +161,6 @@ export default function PinInput({
       onRequestClose={onClose}
     >
       <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.content}>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.subtitle}>{subtitle}</Text>
@@ -180,6 +174,10 @@ export default function PinInput({
           )}
 
           {renderNumberPad()}
+
+          <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     </Modal>
@@ -190,21 +188,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    padding: 20,
-    paddingBottom: 10,
-  },
-  closeButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  closeButtonText: {
-    fontSize: 16,
-    color: '#6b7280',
-    fontWeight: '500',
   },
   content: {
     flex: 1,
@@ -256,6 +239,16 @@ const styles = StyleSheet.create({
   },
   numberPad: {
     width: 300,
+  },
+  cancelButton: {
+    marginTop: 24,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    color: '#6b7280',
+    fontWeight: '600',
   },
   numberRow: {
     flexDirection: 'row',

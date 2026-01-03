@@ -16,6 +16,10 @@ export interface ParentProfile {
   settings: UserSettings;
   kidModePin?: string; // 4-digit PIN to exit kid mode
   kidIds: string[]; // References to KidProfile documents (legacy)
+  termsAcceptedAt?: FirestoreDate;
+  privacyPolicyAcceptedAt?: FirestoreDate;
+  coppaDisclosureAccepted?: boolean;
+  consentStatus?: 'pending' | 'verified' | 'rejected' | 'expired';
   createdAt: FirestoreDate;
   updatedAt: FirestoreDate;
 }
@@ -124,6 +128,9 @@ export interface Recipe {
   averageRating?: number; // Average rating from 1-5
   ratingCount?: number; // Number of ratings received
   isRecommended?: boolean; // Marked as recommended by system
+  importStatus?: 'complete' | 'needs_review';
+  importIssues?: string[];
+  importConfidence?: number;
   skillsRequired?: string[]; // Skills this recipe teaches/requires
   nutritionInfo?: NutritionInfo;
   kidVersionId?: string; // Reference to simplified version
@@ -286,6 +293,9 @@ export type RootStackParamList = {
   Onboarding: undefined;
   Welcome: undefined;
   KidLevel: undefined;
+  ParentalConsent: undefined;
+  PrivacyPolicy: undefined;
+  TermsOfService: undefined;
   ParentSettings: { kidData?: { name: string; age: number; readingLevel: 'beginner' | 'intermediate' | 'advanced' } };
   Main: undefined;
   RecipeDetail: { recipeId: string };

@@ -182,6 +182,7 @@ export default function ParentHomeScreen() {
 
   const renderRecipe = ({ item }: { item: Recipe }) => {
     const hasImage = item.image && !item.image.includes('🍽️') && !item.image.includes('🥘') && item.image.startsWith('http');
+    const needsReview = item.importStatus === 'needs_review' || (item.importIssues && item.importIssues.length > 0);
 
     return (
       <TouchableOpacity style={styles.recipeCard} onPress={() => handleRecipePress(item)}>
@@ -195,6 +196,11 @@ export default function ParentHomeScreen() {
               transition={200}
             />
             <View style={styles.imageOverlay} />
+            {needsReview && (
+              <View style={styles.reviewBadge}>
+                <Text style={styles.reviewBadgeText}>Needs Review</Text>
+              </View>
+            )}
             <View style={styles.recipeContent}>
               <Text style={styles.recipeTitleWithImage} numberOfLines={2}>{item.title}</Text>
               <View style={styles.recipeDetails}>
@@ -213,6 +219,11 @@ export default function ParentHomeScreen() {
           <View style={styles.recipeCardNoImage}>
             <Text style={styles.recipeEmoji}>{item.image || '🍽️'}</Text>
             <Text style={styles.recipeTitle} numberOfLines={2}>{item.title}</Text>
+            {needsReview && (
+              <View style={styles.reviewBadgeInline}>
+                <Text style={styles.reviewBadgeInlineText}>Needs Review</Text>
+              </View>
+            )}
             <View style={styles.recipeDetailsNoImage}>
               <Text style={styles.recipeDetailNoImage}>
                 {item.servings} servings
@@ -468,6 +479,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     borderRadius: 16,
   },
+  reviewBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    backgroundColor: 'rgba(251, 191, 36, 0.95)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  reviewBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
   recipeContent: {
     position: 'absolute',
     bottom: 0,
@@ -513,6 +538,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 8,
     lineHeight: 20,
+  },
+  reviewBadgeInline: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 8,
+  },
+  reviewBadgeInlineText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#92400e',
   },
   recipeDetailsNoImage: {
     alignItems: 'center',

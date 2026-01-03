@@ -42,8 +42,9 @@ class DeepLinkService {
     try {
       // Navigate to the import screen with the URL
       if (this.navigationRef?.current) {
-        this.navigationRef.current.navigate('Import' as never, {
-          importUrl: url
+        this.navigationRef.current.navigate('Main' as never, {
+          screen: 'Import',
+          params: { importUrl: url }
         } as never);
       }
     } catch (error) {

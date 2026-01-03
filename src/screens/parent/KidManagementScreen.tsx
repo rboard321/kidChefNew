@@ -21,7 +21,7 @@ import PinInput from '../../components/PinInput';
 import type { KidProfile, ReadingLevel } from '../../types';
 
 export default function KidManagementScreen() {
-  const { kidProfiles, addKid, updateKid, removeKid, loading, parentProfile, setKidModePin } = useAuth();
+  const { kidProfiles, addKid, updateKid, removeKid, loading, parentProfile, setKidModePin, consentStatus } = useAuth();
   const [addingKid, setAddingKid] = useState(false);
   const [editingKid, setEditingKid] = useState<KidProfile | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -56,6 +56,14 @@ export default function KidManagementScreen() {
   };
 
   const openAddModal = () => {
+    if (consentStatus !== 'verified') {
+      Alert.alert(
+        'Parental Consent Required',
+        'Please complete parental consent verification before adding kids.'
+      );
+      return;
+    }
+
     resetForm();
     setEditingKid(null);
     setShowAddModal(true);

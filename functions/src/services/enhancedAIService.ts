@@ -22,14 +22,20 @@ interface AIExtractionOptions {
 }
 
 export class EnhancedAIService {
-  private openai: OpenAI;
+  private openai: OpenAI | null;
+  private apiKeyAvailable: boolean;
 
   constructor() {
     const apiKey = functions.config().openai?.api_key || process.env.OPENAI_API_KEY;
+    this.apiKeyAvailable = !!apiKey;
+
     if (!apiKey) {
-      throw new Error('OpenAI API key not configured');
+      console.warn('⚠️ OpenAI API key not configured - AI enhancement disabled');
+      console.warn('Basic scraping will still work, but AI fallback is unavailable');
+      this.openai = null;
+    } else {
+      this.openai = new OpenAI({ apiKey });
     }
-    this.openai = new OpenAI({ apiKey });
   }
 
   async extractRecipeWithAI(
@@ -38,6 +44,13 @@ export class EnhancedAIService {
     options: AIExtractionOptions = {}
   ): Promise<AIExtractionResult> {
     const startTime = Date.now();
+
+    // Check if OpenAI is available
+    if (!this.apiKeyAvailable || !this.openai) {
+      console.warn('⚠️ OpenAI API key not available - returning non-AI extraction');
+      // Fallback to basic extraction without AI
+      return await this.basicExtractionWithoutAI(url, html, options);
+    }
 
     // Check if we have cached AI result for this URL
     const cachedResult = await this.getAIResultFromCache(url);
@@ -220,6 +233,45 @@ Content: ${bodyText}`;
     };
   }
 
+  private async basicExtractionWithoutAI(
+    url: string,
+    html: string,
+    options: AIExtractionOptions
+  ): Promise<AIExtractionResult> {
+    const $ = cheerio.load(html);
+
+    // Extract recipe components using CSS selectors only
+    const title = $('h1, .recipe-title, .entry-title, [itemprop="name"]').first().text().trim()
+      || options.hints?.title
+      || 'Unknown Recipe';
+
+    const ingredientElements = $('.ingredient, .recipe-ingredient, .ingredients li, [itemprop="recipeIngredient"]');
+    const instructionElements = $('.instruction, .recipe-instruction, .directions li, .instructions li, [itemprop="recipeInstructions"] li, .recipe-steps li');
+
+    const ingredients = ingredientElements.map((_, el) => $(el).text().trim()).get().filter(Boolean);
+    const instructions = instructionElements.map((_, el) => $(el).text().trim()).get().filter(Boolean);
+
+    // Calculate confidence based on what we found
+    let confidence = 0.3; // Base confidence for non-AI extraction
+    if (title && title !== 'Unknown Recipe' && title.length > 5) confidence += 0.15;
+    if (ingredients.length >= 3) confidence += 0.2;
+    if (instructions.length >= 2) confidence += 0.2;
+    if (ingredients.length >= 5 && instructions.length >= 3) confidence += 0.15;
+
+    return {
+      recipe: {
+        title,
+        ingredients: ingredients.length > 0 ? ingredients : (options.hints?.ingredients || []),
+        instructions: instructions.length > 0 ? instructions : (options.hints?.partialInstructions || []),
+        sourceUrl: url
+      },
+      confidence: Math.min(confidence, 0.7), // Cap at 0.7 for non-AI extraction
+      method: 'basic-no-ai',
+      processingTime: 0,
+      tokensUsed: 0
+    };
+  }
+
   private extractRelevantContent($: cheerio.CheerioAPI): string {
     // Priority content extraction
     const contentSelectors = [
@@ -314,6 +366,10 @@ ${content}`;
   }
 
   private async callOpenAI(prompt: string, model: string, maxTokens: number): Promise<any> {
+    if (!this.openai) {
+      throw new Error('OpenAI client not initialized - API key not available');
+    }
+
     const response = await Promise.race([
       this.openai.chat.completions.create({
         model,

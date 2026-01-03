@@ -3,7 +3,9 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
-  User
+  User,
+  sendEmailVerification as firebaseSendEmailVerification,
+  reload
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { auth, db } from './firebase';
@@ -34,7 +36,7 @@ export const authService: AuthService = {
     try {
       // Send email verification immediately after account creation
       console.log('📧 Attempting to send verification email...');
-      await sendEmailVerification(user);
+      await authService.sendEmailVerification(user);
       console.log('✅ Signup process completed successfully');
     } catch (emailError) {
       console.warn('⚠️ Signup succeeded but email verification failed:', emailError);
@@ -70,7 +72,7 @@ export const authService: AuthService = {
 
       console.log('📧 Attempting to send email verification without custom settings first...');
 
-      await sendEmailVerification(user);
+      await firebaseSendEmailVerification(user);
 
       console.log('✅ Email verification sent successfully to:', user.email);
 
