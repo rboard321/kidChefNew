@@ -270,7 +270,7 @@ RCT_EXPORT_METHOD(clearToken)
 @end
 `);
 
-      ensureFile(swiftFile, `import UIKit
+      ensureFile(swiftFile, String.raw`import UIKit
 import UniformTypeIdentifiers
 import MobileCoreServices
 
@@ -527,6 +527,55 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
   }
 
   private func loadHtmlThenFetch(from provider: NSItemProvider, urlString: String) {
+    let activeWebpageType = "com.apple.active-webpage"
+    let webArchiveTypeIdentifier: String
+    if #available(iOS 14.0, *) {
+      webArchiveTypeIdentifier = UTType.webArchive.identifier
+    } else {
+      webArchiveTypeIdentifier = "com.apple.webarchive"
+    }
+
+    if provider.hasItemConformingToTypeIdentifier(webArchiveTypeIdentifier) {
+      if #available(iOS 14.0, *) {
+        provider.loadDataRepresentation(forTypeIdentifier: webArchiveTypeIdentifier) { [weak self] data, _ in
+          guard let self else { return }
+          if let data, let html = self.extractHtmlFromWebArchiveData(data) {
+            print("ShareExtension: extracted webarchive html length", html.count)
+            self.fetchRecipe(from: urlString, html: html)
+          } else {
+            self.loadHtmlFromProvider(provider, urlString: urlString)
+          }
+        }
+      } else {
+        provider.loadItem(forTypeIdentifier: webArchiveTypeIdentifier, options: nil) { [weak self] item, _ in
+          guard let self else { return }
+          if let html = self.extractHtmlFromWebArchive(item: item) {
+            print("ShareExtension: extracted webarchive html length", html.count)
+            self.fetchRecipe(from: urlString, html: html)
+          } else {
+            self.loadHtmlFromProvider(provider, urlString: urlString)
+          }
+        }
+      }
+      return
+    }
+
+    if provider.hasItemConformingToTypeIdentifier(activeWebpageType) {
+      provider.loadItem(forTypeIdentifier: activeWebpageType, options: nil) { [weak self] item, _ in
+        guard let self else { return }
+        if let url = self.extractUrlFromActiveWebpage(item: item) {
+          self.fetchHtmlFromUrl(url.absoluteString)
+        } else {
+          self.loadHtmlFromProvider(provider, urlString: urlString)
+        }
+      }
+      return
+    }
+
+    loadHtmlFromProvider(provider, urlString: urlString)
+  }
+
+  private func loadHtmlFromProvider(_ provider: NSItemProvider, urlString: String) {
     let htmlTypeIdentifier: String
     if #available(iOS 14.0, *) {
       htmlTypeIdentifier = UTType.html.identifier
@@ -535,20 +584,74 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     }
 
     if provider.hasItemConformingToTypeIdentifier(htmlTypeIdentifier) {
-      provider.loadItem(forTypeIdentifier: htmlTypeIdentifier, options: nil) { [weak self] item, _ in
-        guard let self else { return }
-        if let data = item as? Data, let html = String(data: data, encoding: .utf8) {
-          self.fetchRecipe(from: urlString, html: html)
-        } else if let html = item as? String {
-          self.fetchRecipe(from: urlString, html: html)
-        } else {
-          self.fetchRecipe(from: urlString, html: nil)
+      if #available(iOS 14.0, *) {
+        provider.loadDataRepresentation(forTypeIdentifier: htmlTypeIdentifier) { [weak self] data, _ in
+          guard let self else { return }
+          if let data, let html = String(data: data, encoding: .utf8) {
+            print("ShareExtension: extracted html length", html.count)
+            self.fetchRecipe(from: urlString, html: html)
+          } else {
+            self.fetchRecipe(from: urlString, html: nil)
+          }
+        }
+      } else {
+        provider.loadItem(forTypeIdentifier: htmlTypeIdentifier, options: nil) { [weak self] item, _ in
+          guard let self else { return }
+          if let data = item as? Data, let html = String(data: data, encoding: .utf8) {
+            print("ShareExtension: extracted html length", html.count)
+            self.fetchRecipe(from: urlString, html: html)
+          } else if let html = item as? String {
+            print("ShareExtension: extracted html length", html.count)
+            self.fetchRecipe(from: urlString, html: html)
+          } else {
+            self.fetchRecipe(from: urlString, html: nil)
+          }
         }
       }
       return
     }
 
-    fetchRecipe(from: urlString, html: nil)
+    fetchHtmlFromUrl(urlString)
+  }
+
+  private func extractUrlFromActiveWebpage(item: NSSecureCoding?) -> URL? {
+    if let url = item as? URL {
+      return url
+    }
+    guard let data = item as? Data else { return nil }
+    do {
+      let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+      guard let dict = plist as? [String: Any] else { return nil }
+      if let urlString = dict["URL"] as? String, let url = URL(string: urlString) {
+        return url
+      }
+      if let urlString = dict["WebPageURL"] as? String, let url = URL(string: urlString) {
+        return url
+      }
+      if let urlString = dict["WebPageSourceURL"] as? String, let url = URL(string: urlString) {
+        return url
+      }
+    } catch {
+      return nil
+    }
+    return nil
+  }
+
+  private func extractHtmlFromWebArchiveData(_ data: Data) -> String? {
+    do {
+      let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+      guard let dict = plist as? [String: Any] else { return nil }
+      guard let mainResource = dict["WebMainResource"] as? [String: Any] else { return nil }
+      guard let resourceData = mainResource["WebResourceData"] as? Data else { return nil }
+      return String(data: resourceData, encoding: .utf8)
+    } catch {
+      return nil
+    }
+  }
+
+  private func extractHtmlFromWebArchive(item: NSSecureCoding?) -> String? {
+    guard let data = item as? Data else { return nil }
+    return extractHtmlFromWebArchiveData(data)
   }
 
   private func fetchHtmlFromUrl(_ urlString: String) {
@@ -716,7 +819,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     var request = URLRequest(url: requestUrl)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer (token)", forHTTPHeaderField: "Authorization")
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     request.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
 
     URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
