@@ -15,15 +15,17 @@ import TermsOfServiceScreen from '../screens/auth/TermsOfServiceScreen';
 // Onboarding screens
 import WelcomeScreen from '../screens/onboarding/WelcomeScreen';
 import ParentSettingsScreen from '../screens/onboarding/ParentSettingsScreen';
-import ParentalConsentScreen from '../screens/onboarding/ParentalConsentScreen';
 
 // Parent screens
 import ParentHomeScreen from '../screens/parent/HomeScreen';
 import ImportRecipeScreen from '../screens/parent/ImportRecipeScreen';
 import KidManagementScreen from '../screens/parent/KidManagementScreen';
+import KidProfileDetailScreen from '../screens/parent/KidProfileDetailScreen';
 import RecipeDetailScreen from '../screens/parent/RecipeDetailScreen';
+import RecipeEditScreen from '../screens/parent/RecipeEditScreen';
 import RecipeManagementScreen from '../screens/parent/RecipeManagementScreen';
 import FavoritesScreen from '../screens/parent/FavoritesScreen';
+import KidRecipePreviewScreen from '../screens/parent/KidRecipePreviewScreen';
 
 // Kid screens
 import KidHomeScreen from '../screens/kid/KidHomeScreen';
@@ -137,7 +139,7 @@ function KidTabNavigator() {
 
 // Main App Navigator
 export default function AppNavigator() {
-  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode, consentStatus, checkConsentStatus } = useAuth();
+  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode } = useAuth();
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState(false);
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
   const legalScreens = (
@@ -196,20 +198,6 @@ export default function AppNavigator() {
                 <AuthErrorBoundary>
                   <AuthScreen />
                 </AuthErrorBoundary>
-              )}
-            </RootStack.Screen>
-            {legalScreens}
-          </>
-        ) : consentStatus !== 'verified' ? (
-          // Authenticated but parental consent not verified - show consent screen
-          <>
-            <RootStack.Screen name="ParentalConsent">
-              {() => (
-                <ParentalConsentScreen
-                  onConsentVerified={() => {
-                    checkConsentStatus();
-                  }}
-                />
               )}
             </RootStack.Screen>
             {legalScreens}
@@ -278,6 +266,23 @@ export default function AppNavigator() {
               }}
             />
             <RootStack.Screen
+              name="RecipeEdit"
+              component={RecipeEditScreen}
+              options={{
+                headerShown: true,
+                title: 'Edit Recipe'
+              }}
+            />
+            <RootStack.Screen
+              name="KidProfileDetail"
+              component={KidProfileDetailScreen}
+              options={{
+                presentation: 'modal',
+                headerShown: true,
+                title: 'Kid Profile'
+              }}
+            />
+            <RootStack.Screen
               name="RecipeManagement"
               component={RecipeManagementScreen}
               options={{
@@ -291,6 +296,15 @@ export default function AppNavigator() {
               options={{
                 headerShown: true,
                 title: 'Favorites'
+              }}
+            />
+            <RootStack.Screen
+              name="KidRecipePreview"
+              component={KidRecipePreviewScreen}
+              options={{
+                headerShown: true,
+                title: 'Recipe Preview',
+                presentation: 'modal'
               }}
             />
             {legalScreens}

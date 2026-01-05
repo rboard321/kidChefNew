@@ -286,23 +286,48 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
   private let cancelButton = UIButton(type: .system)
   private let saveButton = UIButton(type: .system)
   private let titleField = UITextField()
+  private let recipeImageView: UIImageView = {
+    let imageView = UIImageView()
+    imageView.contentMode = .scaleAspectFill
+    imageView.clipsToBounds = true
+    imageView.layer.cornerRadius = 8
+    imageView.backgroundColor = UIColor.systemGray6
+    imageView.image = UIImage(systemName: "photo")
+    imageView.tintColor = .tertiaryLabel
+    imageView.translatesAutoresizingMaskIntoConstraints = false
+    return imageView
+  }()
   private let reviewBanner = UILabel()
   private let contentStack = UIStackView()
   private let segmentedControl = UISegmentedControl(items: ["Ingredients", "Steps"])
   private let tableView = UITableView(frame: .zero, style: .plain)
   private let footerLabel = UILabel()
   private let addItemButton = UIButton(type: .system)
+  private let metadataStackView: UIStackView = {
+    let stack = UIStackView()
+    stack.axis = .horizontal
+    stack.spacing = 12
+    stack.alignment = .center
+    stack.distribution = .fillProportionally
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    return stack
+  }()
 
   private let tokenKey = "kidchef.firebaseIdToken"
 
   private var selectedTab: Tab = .ingredients
   private var recipeTitle: String = ""
+  private var recipeImageUrl: String = ""
   private var recipeIngredients: [String] = []
   private var recipeSteps: [String] = []
   private var recipeSourceUrl: String = ""
   private var isSaving = false
   private var didStartImport = false
   private var importConfidence: Double = 0.0
+  private var recipeServings: Int? = nil
+  private var recipePrepTime: String? = nil
+  private var recipeCookTime: String? = nil
+  private var recipeTotalTime: String? = nil
 
   private func runOnMain(_ block: @escaping () -> Void) {
     if Thread.isMainThread {
@@ -312,6 +337,101 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
         block()
       }
     }
+  }
+
+  private func loadRecipeImage(urlString: String) {
+    guard let url = URL(string: urlString) else {
+      print("❌ Invalid image URL: \\(urlString)")
+      return
+    }
+
+    print("📸 Loading recipe image from: \\(urlString)")
+
+    URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+      guard let self = self else { return }
+
+      if let error = error {
+        print("❌ Image load error: \\(error.localizedDescription)")
+        DispatchQueue.main.async {
+          self.recipeImageView.image = UIImage(systemName: "photo")
+          self.recipeImageView.tintColor = .tertiaryLabel
+        }
+        return
+      }
+
+      guard let data = data, let image = UIImage(data: data) else {
+        print("❌ Invalid image data")
+        return
+      }
+
+      DispatchQueue.main.async {
+        self.recipeImageView.image = image
+        self.recipeImageView.tintColor = nil
+        print("✅ Image loaded successfully")
+      }
+    }.resume()
+  }
+
+  private func createMetadataBadge(icon: String, text: String) -> UIView {
+    let container = UIView()
+    let label = UILabel()
+    label.text = "\(icon) \(text)"
+    label.font = UIFont.systemFont(ofSize: 12, weight: .medium)
+    label.textColor = .secondaryLabel
+    label.backgroundColor = .secondarySystemBackground
+    label.textAlignment = .center
+    label.layer.cornerRadius = 10
+    label.layer.masksToBounds = true
+    label.translatesAutoresizingMaskIntoConstraints = false
+
+    container.addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+      label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+      label.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+      label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
+    ])
+
+    return container
+  }
+
+  private func updateMetadataDisplay() {
+    // Clear existing badges
+    metadataStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+    var badges: [UIView] = []
+
+    // Servings badge
+    if let servings = recipeServings, servings > 0 {
+      let text = servings == 1 ? "1 serving" : "\\(servings) servings"
+      badges.append(createMetadataBadge(icon: "👥", text: text))
+    }
+
+    // Prep time badge
+    if let prepTime = recipePrepTime, !prepTime.isEmpty {
+      badges.append(createMetadataBadge(icon: "⏱", text: "\\(prepTime) prep"))
+    }
+
+    // Cook time badge
+    if let cookTime = recipeCookTime, !cookTime.isEmpty {
+      badges.append(createMetadataBadge(icon: "🍳", text: "\\(cookTime) cook"))
+    }
+
+    // Fallback to total time if prep/cook not available
+    if recipePrepTime == nil && recipeCookTime == nil,
+       let totalTime = recipeTotalTime, !totalTime.isEmpty {
+      badges.append(createMetadataBadge(icon: "⏱", text: "\\(totalTime) total"))
+    }
+
+    // Only show metadata view if we have at least one badge
+    if badges.isEmpty {
+      metadataStackView.isHidden = true
+      return
+    }
+
+    badges.forEach { metadataStackView.addArrangedSubview($0) }
+
+    metadataStackView.isHidden = false
   }
 
   override func viewDidLoad() {
@@ -355,10 +475,20 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     contentStack.axis = .vertical
     contentStack.spacing = 8
     contentStack.addArrangedSubview(titleField)
+    contentStack.addArrangedSubview(recipeImageView)
+    contentStack.addArrangedSubview(metadataStackView)
     contentStack.addArrangedSubview(reviewBanner)
+
+    // Set image view height constraint
+    recipeImageView.heightAnchor.constraint(equalToConstant: 200).isActive = true
+    recipeImageView.isHidden = true
+    metadataStackView.isHidden = true
 
     segmentedControl.selectedSegmentIndex = 0
     segmentedControl.addTarget(self, action: #selector(tabChanged), for: .valueChanged)
+    segmentedControl.selectedSegmentTintColor = .systemBlue
+    segmentedControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
+    segmentedControl.setTitleTextAttributes([.foregroundColor: UIColor.label], for: .normal)
     segmentedControl.isHidden = true
     contentStack.addArrangedSubview(segmentedControl)
 
@@ -369,6 +499,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     tableView.rowHeight = UITableView.automaticDimension
     tableView.estimatedRowHeight = 56
     tableView.keyboardDismissMode = .interactive
+    tableView.backgroundColor = .systemGroupedBackground
 
     footerLabel.textAlignment = .center
     footerLabel.font = UIFont.systemFont(ofSize: 12)
@@ -450,7 +581,14 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
   @objc private func tabChanged() {
     selectedTab = segmentedControl.selectedSegmentIndex == 0 ? .ingredients : .steps
     updateAddButtonTitle()
-    tableView.reloadData()
+    UIView.transition(with: tableView, duration: 0.2, options: .transitionCrossDissolve, animations: {
+      self.tableView.reloadData()
+    })
+    DispatchQueue.main.async {
+      self.tableView.beginUpdates()
+      self.tableView.endUpdates()
+      self.tableView.invalidateIntrinsicContentSize()
+    }
   }
 
   @objc private func addItemTapped() {
@@ -461,6 +599,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
       recipeSteps.append("")
     }
     tableView.reloadData()
+    tableView.layoutIfNeeded()
   }
 
   @objc private func titleChanged() {
@@ -766,9 +905,16 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
 
   private func updateRecipeUI(_ recipe: [String: Any], status: String, issues: [String], confidence: Double) {
     recipeTitle = recipe["title"] as? String ?? ""
+    recipeImageUrl = recipe["image"] as? String ?? ""
     recipeIngredients = recipe["ingredients"] as? [String] ?? []
     recipeSteps = recipe["instructions"] as? [String] ?? []
     importConfidence = confidence
+
+    // Extract metadata
+    recipeServings = recipe["servings"] as? Int
+    recipePrepTime = recipe["prepTime"] as? String
+    recipeCookTime = recipe["cookTime"] as? String
+    recipeTotalTime = recipe["totalTime"] as? String
 
     runOnMain { [weak self] in
       guard let self else { return }
@@ -777,6 +923,21 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
 
       self.titleField.text = self.recipeTitle
       self.titleField.isHidden = false
+
+      // Load and display the image
+      if !self.recipeImageUrl.isEmpty {
+        self.loadRecipeImage(urlString: self.recipeImageUrl)
+        self.recipeImageView.isHidden = false
+      } else {
+        self.recipeImageView.image = UIImage(systemName: "photo")
+        self.recipeImageView.tintColor = .tertiaryLabel
+        self.recipeImageView.isHidden = false
+        print("⚠️ No image URL provided for recipe")
+      }
+
+      // Update metadata display
+      self.updateMetadataDisplay()
+
       self.segmentedControl.isHidden = false
       self.tableView.isHidden = false
       self.footerLabel.isHidden = false
@@ -785,6 +946,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
       self.updateSaveButtonState()
       self.updateAddButtonTitle()
       self.tableView.reloadData()
+      self.tableView.layoutIfNeeded()
       self.tableView.tableFooterView = self.buildFooterView()
     }
   }
@@ -804,17 +966,32 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     let statusInfo = draftStatus(title: trimmedTitle, steps: recipeSteps, ingredients: recipeIngredients)
     let finalTitle = trimmedTitle.isEmpty ? "Untitled Recipe" : trimmedTitle
 
-    let payload: [String: Any] = [
-      "recipe": [
-        "title": finalTitle,
-        "ingredients": recipeIngredients,
-        "instructions": recipeSteps,
-        "sourceUrl": recipeSourceUrl,
-        "importStatus": statusInfo.status,
-        "importIssues": statusInfo.issues,
-        "importConfidence": importConfidence
-      ]
+    var recipeDict: [String: Any] = [
+      "title": finalTitle,
+      "image": recipeImageUrl,
+      "ingredients": recipeIngredients,
+      "instructions": recipeSteps,
+      "sourceUrl": recipeSourceUrl,
+      "importStatus": statusInfo.status,
+      "importIssues": statusInfo.issues,
+      "importConfidence": importConfidence
     ]
+
+    // Add metadata if available
+    if let servings = recipeServings {
+      recipeDict["servings"] = servings
+    }
+    if let prepTime = recipePrepTime {
+      recipeDict["prepTime"] = prepTime
+    }
+    if let cookTime = recipeCookTime {
+      recipeDict["cookTime"] = cookTime
+    }
+    if let totalTime = recipeTotalTime {
+      recipeDict["totalTime"] = totalTime
+    }
+
+    let payload: [String: Any] = ["recipe": recipeDict]
 
     var request = URLRequest(url: requestUrl)
     request.httpMethod = "POST"
@@ -834,7 +1011,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     spinner.stopAnimating()
 
     if let error {
-      showError("Save failed: (error.localizedDescription)")
+      showError("Save failed: \(error.localizedDescription)")
       return
     }
 
@@ -844,7 +1021,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     }
 
     guard httpResponse.statusCode == 200 else {
-      showError("Save failed (status (httpResponse.statusCode)).")
+      showError("Save failed (status \(httpResponse.statusCode)).")
       return
     }
 
@@ -990,6 +1167,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
   func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
     let cell = tableView.dequeueReusableCell(withIdentifier: "EditableCell") ?? UITableViewCell(style: .default, reuseIdentifier: "EditableCell")
     cell.selectionStyle = .none
+    cell.backgroundColor = .systemGroupedBackground
 
     let textView: UITextView
     if let existing = cell.contentView.viewWithTag(1001) as? UITextView {
@@ -998,9 +1176,10 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
       textView = UITextView()
       textView.tag = 1001
       textView.font = UIFont.systemFont(ofSize: 16)
+      textView.textColor = .label
       textView.isScrollEnabled = false
       textView.delegate = self
-      textView.backgroundColor = UIColor(red: 0.97, green: 0.98, blue: 0.99, alpha: 1.0)
+      textView.backgroundColor = .secondarySystemBackground
       textView.layer.cornerRadius = 8
       textView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
       textView.translatesAutoresizingMaskIntoConstraints = false
@@ -1012,10 +1191,14 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
         textView.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 8),
         textView.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -8),
       ])
+      let heightConstraint = textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
+      heightConstraint.priority = .defaultHigh
+      heightConstraint.isActive = true
     }
 
     textView.accessibilityIdentifier = selectedTab == .ingredients ? "ingredients" : "steps"
     textView.tag = indexPath.row
+    textView.textColor = .label
 
     switch selectedTab {
     case .ingredients:
@@ -1023,6 +1206,7 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
     case .steps:
       textView.text = recipeSteps[indexPath.row]
     }
+    textView.invalidateIntrinsicContentSize()
 
     return cell
   }
@@ -1058,6 +1242,9 @@ final class ShareViewController: UIViewController, UITableViewDataSource, UITabl
 
     updateReviewBanner()
     updateSaveButtonState()
+    tableView.beginUpdates()
+    tableView.endUpdates()
+    tableView.layoutIfNeeded()
   }
 }
 

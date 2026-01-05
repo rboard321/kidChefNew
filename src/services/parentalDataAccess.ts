@@ -379,7 +379,7 @@ export const parentalDataAccessService: ParentalDataAccessService = {
         },
       ],
       contactInfo: {
-        email: 'board.ricky@gmail.com',
+        email: 'kidchefapp@gmail.com',
         subject: 'KidChef Parental Rights Request',
         responseTime: '48 hours',
       },

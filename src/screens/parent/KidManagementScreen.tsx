@@ -16,12 +16,14 @@ import {
   TouchableWithoutFeedback,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import PinInput from '../../components/PinInput';
 import type { KidProfile, ReadingLevel } from '../../types';
 
 export default function KidManagementScreen() {
-  const { kidProfiles, addKid, updateKid, removeKid, loading, parentProfile, setKidModePin, consentStatus } = useAuth();
+  const navigation = useNavigation();
+  const { kidProfiles, addKid, updateKid, removeKid, loading, parentProfile, setKidModePin } = useAuth();
   const [addingKid, setAddingKid] = useState(false);
   const [editingKid, setEditingKid] = useState<KidProfile | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -56,14 +58,6 @@ export default function KidManagementScreen() {
   };
 
   const openAddModal = () => {
-    if (consentStatus !== 'verified') {
-      Alert.alert(
-        'Parental Consent Required',
-        'Please complete parental consent verification before adding kids.'
-      );
-      return;
-    }
-
     resetForm();
     setEditingKid(null);
     setShowAddModal(true);
@@ -255,8 +249,16 @@ export default function KidManagementScreen() {
     }
   };
 
+  const handleKidCardPress = (kid: KidProfile) => {
+    navigation.navigate('KidProfileDetail' as never, { kid } as never);
+  };
+
   const renderKid = ({ item }: { item: KidProfile }) => (
-    <View style={styles.kidCard}>
+    <TouchableOpacity
+      style={styles.kidCard}
+      onPress={() => handleKidCardPress(item)}
+      activeOpacity={0.7}
+    >
       <View style={styles.kidHeader}>
         <Text style={styles.kidEmoji}>{item.avatarEmoji || '👶'}</Text>
         <View style={styles.kidInfo}>
@@ -276,14 +278,26 @@ export default function KidManagementScreen() {
       )}
 
       <View style={styles.kidActions}>
-        <TouchableOpacity style={styles.editButton} onPress={() => openEditModal(item)}>
+        <TouchableOpacity
+          style={styles.editButton}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            openEditModal(item);
+          }}
+        >
           <Text style={styles.editButtonText}>✏️ Edit</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.deleteButton} onPress={() => handleDeleteKid(item)}>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            handleDeleteKid(item);
+          }}
+        >
           <Text style={styles.deleteButtonText}>🗑️ Remove</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   return (

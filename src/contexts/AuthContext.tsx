@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { AppState } from 'react-native';
 import { User } from 'firebase/auth';
 import { authService } from '../services/auth';
 import { authErrorHandler, authOperationManager } from '../services/authErrorHandler';
@@ -6,7 +7,6 @@ import { parentProfileService } from '../services/parentProfile';
 import { kidProfileService } from '../services/kidProfile';
 import { hashPin, verifyPin, validatePinFormat } from '../utils/pinSecurity';
 import { useSessionTimeout } from '../hooks/useSessionTimeout';
-import { parentalConsentService, type ConsentStatus } from '../services/parentalConsent';
 import { sendAccountCreationNotice, sendKidProfileNotice } from '../services/parentalNotice';
 import { onSnapshot, doc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,7 +20,6 @@ interface AuthContextType {
   kidProfiles: KidProfile[];
   currentKid: KidProfile | null;
   deviceMode: 'parent' | 'kid';
-  consentStatus: ConsentStatus;
   legalAcceptance: {
     termsAcceptedAt: Date;
     privacyPolicyAcceptedAt: Date;
@@ -47,7 +46,6 @@ interface AuthContextType {
   updateKid: (kidId: string, updates: Partial<KidProfile>) => Promise<void>;
   removeKid: (kidId: string) => Promise<void>;
   checkAndRunMigration: () => Promise<boolean>;
-  checkConsentStatus: () => Promise<void>;
   trackActivity: () => void;
 }
 
@@ -67,7 +65,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [kidProfiles, setKidProfiles] = useState<KidProfile[]>([]);
   const [currentKid, setCurrentKid] = useState<KidProfile | null>(null);
   const [deviceMode, setDeviceMode] = useState<'parent' | 'kid'>('parent');
-  const [consentStatus, setConsentStatus] = useState<ConsentStatus>('pending');
   const [loading, setLoading] = useState(true);
   const [legalAcceptance, setLegalAcceptanceState] = useState<{
     termsAcceptedAt: Date;
@@ -155,22 +152,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const checkConsentStatus = async () => {
-    if (!user) return;
-
-    try {
-      const status = await parentalConsentService.checkConsentStatus(user.uid);
-      setConsentStatus(status);
-    } catch (error) {
-      console.error('Error checking consent status:', error);
-      setConsentStatus('pending');
-    }
-  };
 
   const refreshProfile = async () => {
     if (user) {
       await loadUserProfile(user);
-      await checkConsentStatus();
     }
   };
 
@@ -182,21 +167,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user.getIdToken().then(setSharedAuthToken).catch((error) => {
           console.error('Failed to store shared auth token:', error);
         });
-        await loadUserProfile(user);
-        await checkConsentStatus();
+        setLoading(false);
+        loadUserProfile(user).catch((error) => {
+          console.error('Error loading user profile:', error);
+        });
       } else {
         clearSharedAuthToken();
         setParentProfile(null);
         setKidProfiles([]);
         setCurrentKid(null);
         setDeviceMode('parent');
+        setLoading(false);
       }
-
-      setLoading(false);
     });
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const refreshToken = async (forceRefresh = false) => {
+      try {
+        const token = await user.getIdToken(forceRefresh);
+        setSharedAuthToken(token);
+      } catch (error) {
+        console.error('Failed to refresh shared auth token:', error);
+      }
+    };
+
+    const unsubscribe = authService.onIdTokenChanged((updatedUser) => {
+      if (updatedUser) {
+        refreshToken(false);
+      }
+    });
+
+    const intervalId = setInterval(() => {
+      refreshToken(true);
+    }, 45 * 60 * 1000);
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        refreshToken(true);
+      }
+    });
+
+    refreshToken(false);
+
+    return () => {
+      unsubscribe();
+      clearInterval(intervalId);
+      appStateSubscription.remove();
+    };
+  }, [user?.uid]);
 
   // Real-time listener for parent profile changes (including kid profile updates)
   useEffect(() => {
@@ -318,13 +343,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Error sending account creation notice:', noticeError);
         // Don't fail signup if notice fails, but log it for follow-up
       }
-
-      await parentalConsentService.initiateConsent({
-        parentName: user.displayName || user.email?.split('@')[0] || 'Parent',
-        parentEmail: user.email || email,
-        method: 'digital_signature',
-        childrenInfo: []
-      });
     } catch (error) {
       setLoading(false);
 
@@ -479,9 +497,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addKid = async (kidData: Omit<KidProfile, 'id' | 'parentId' | 'createdAt' | 'updatedAt'>) => {
     if (!user) throw new Error('No user logged in');
-    if (consentStatus !== 'verified') {
-      throw new Error('Parental consent is required before adding kids.');
-    }
 
     // Create parent profile if it doesn't exist
     if (!parentProfile) {
@@ -504,7 +519,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         termsAcceptedAt: legalAcceptance?.termsAcceptedAt,
         privacyPolicyAcceptedAt: legalAcceptance?.privacyPolicyAcceptedAt,
         coppaDisclosureAccepted: legalAcceptance?.coppaDisclosureAccepted,
-        consentStatus,
+        coppaConsentDate: legalAcceptance?.coppaDisclosureAccepted ? new Date() : undefined,
         kidIds: [],
       };
 
@@ -621,7 +636,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     kidProfiles,
     currentKid,
     deviceMode,
-    consentStatus,
     legalAcceptance,
     loading,
     signIn,
@@ -644,7 +658,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updateKid,
     removeKid,
     checkAndRunMigration,
-    checkConsentStatus,
     trackActivity,
   };
 

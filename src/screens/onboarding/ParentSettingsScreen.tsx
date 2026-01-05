@@ -33,7 +33,7 @@ interface RouteParams {
 export default function ParentSettingsScreen({ onComplete }: ParentSettingsScreenProps) {
   const route = useRoute();
   const { kidData } = (route.params as RouteParams) || {};
-  const { user, refreshProfile, legalAcceptance, consentStatus } = useAuth();
+  const { user, refreshProfile, legalAcceptance } = useAuth();
 
   const [showForm, setShowForm] = useState(false);
   const [parentName, setParentName] = useState('');
@@ -116,7 +116,7 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
         termsAcceptedAt: legalAcceptance?.termsAcceptedAt || new Date(),
         privacyPolicyAcceptedAt: legalAcceptance?.privacyPolicyAcceptedAt || new Date(),
         coppaDisclosureAccepted: legalAcceptance?.coppaDisclosureAccepted ?? false,
-        consentStatus,
+        coppaConsentDate: legalAcceptance?.coppaDisclosureAccepted ? new Date() : undefined,
       };
 
       console.log('📝 About to create parent profile with data:', profileData);

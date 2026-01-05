@@ -258,7 +258,7 @@ ${cleanedText}`;
     return validated;
 }
 async function extractRecipeWithDetails(url) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j;
     try {
         const cached = await getRecipeFromCache(url);
         if (cached) {
@@ -299,6 +299,13 @@ async function extractRecipeWithDetails(url) {
             if (!result.recipe.image) {
                 result.recipe.image = extractImageFromMetaTags($);
             }
+            if (result.recipe) {
+                const meta = extractJsonLdRecipeMeta($);
+                result.recipe.servings = (_d = result.recipe.servings) !== null && _d !== void 0 ? _d : meta.servings;
+                result.recipe.prepTime = (_e = result.recipe.prepTime) !== null && _e !== void 0 ? _e : meta.prepTime;
+                result.recipe.cookTime = (_f = result.recipe.cookTime) !== null && _f !== void 0 ? _f : meta.cookTime;
+                result.recipe.totalTime = (_g = result.recipe.totalTime) !== null && _g !== void 0 ? _g : meta.totalTime;
+            }
             try {
                 // Only validate if we have essential fields
                 if (result.recipe.title && result.recipe.ingredients && result.recipe.instructions) {
@@ -321,8 +328,8 @@ async function extractRecipeWithDetails(url) {
                     // Return partial data without validation
                     console.log('Scrape debug: Essential fields missing, returning partial', {
                         hasTitle: !!result.recipe.title,
-                        hasIngredients: !!((_d = result.recipe.ingredients) === null || _d === void 0 ? void 0 : _d.length),
-                        hasInstructions: !!((_e = result.recipe.instructions) === null || _e === void 0 ? void 0 : _e.length),
+                        hasIngredients: !!((_h = result.recipe.ingredients) === null || _h === void 0 ? void 0 : _h.length),
+                        hasInstructions: !!((_j = result.recipe.instructions) === null || _j === void 0 ? void 0 : _j.length),
                         method: result.method,
                         confidence: result.confidence
                     });
@@ -371,7 +378,7 @@ async function extractRecipeWithDetails(url) {
     }
 }
 async function extractRecipeWithDetailsFromHtml(url, html) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f, _g;
     try {
         const cached = await getRecipeFromCache(url);
         if (cached) {
@@ -396,6 +403,13 @@ async function extractRecipeWithDetailsFromHtml(url, html) {
             if (!result.recipe.image) {
                 result.recipe.image = extractImageFromMetaTags($);
             }
+            if (result.recipe) {
+                const meta = extractJsonLdRecipeMeta($);
+                result.recipe.servings = (_b = result.recipe.servings) !== null && _b !== void 0 ? _b : meta.servings;
+                result.recipe.prepTime = (_c = result.recipe.prepTime) !== null && _c !== void 0 ? _c : meta.prepTime;
+                result.recipe.cookTime = (_d = result.recipe.cookTime) !== null && _d !== void 0 ? _d : meta.cookTime;
+                result.recipe.totalTime = (_e = result.recipe.totalTime) !== null && _e !== void 0 ? _e : meta.totalTime;
+            }
             try {
                 if (result.recipe.title && result.recipe.ingredients && result.recipe.instructions) {
                     const validated = validateAndCleanRecipe(result.recipe, url);
@@ -416,8 +430,8 @@ async function extractRecipeWithDetailsFromHtml(url, html) {
                 else {
                     console.log('Scrape debug: Essential fields missing, returning partial (html)', {
                         hasTitle: !!result.recipe.title,
-                        hasIngredients: !!((_b = result.recipe.ingredients) === null || _b === void 0 ? void 0 : _b.length),
-                        hasInstructions: !!((_c = result.recipe.instructions) === null || _c === void 0 ? void 0 : _c.length),
+                        hasIngredients: !!((_f = result.recipe.ingredients) === null || _f === void 0 ? void 0 : _f.length),
+                        hasInstructions: !!((_g = result.recipe.instructions) === null || _g === void 0 ? void 0 : _g.length),
                         method: result.method,
                         confidence: result.confidence
                     });
@@ -464,7 +478,7 @@ async function extractRecipeWithDetailsFromHtml(url, html) {
     }
 }
 async function extractRecipeFromHtml(url, html) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
     try {
         const cached = await getRecipeFromCache(url);
         if (cached) {
@@ -488,6 +502,13 @@ async function extractRecipeFromHtml(url, html) {
         if (result.recipe && result.confidence > 0.3) {
             if (!result.recipe.image) {
                 result.recipe.image = extractImageFromMetaTags($);
+            }
+            if (result.recipe) {
+                const meta = extractJsonLdRecipeMeta($);
+                result.recipe.servings = (_b = result.recipe.servings) !== null && _b !== void 0 ? _b : meta.servings;
+                result.recipe.prepTime = (_c = result.recipe.prepTime) !== null && _c !== void 0 ? _c : meta.prepTime;
+                result.recipe.cookTime = (_d = result.recipe.cookTime) !== null && _d !== void 0 ? _d : meta.cookTime;
+                result.recipe.totalTime = (_e = result.recipe.totalTime) !== null && _e !== void 0 ? _e : meta.totalTime;
             }
             try {
                 const validated = validateAndCleanRecipe(result.recipe, url);
@@ -515,14 +536,14 @@ async function extractRecipeFromHtml(url, html) {
         console.log('Scrape debug: Falling back to AI extraction (html)', {
             reason: result.confidence < 0.3 ? 'low_confidence' : 'validation_failed',
             confidence: result.confidence,
-            candidateTitle: (_b = result.recipe) === null || _b === void 0 ? void 0 : _b.title,
-            hasIngredients: !!((_d = (_c = result.recipe) === null || _c === void 0 ? void 0 : _c.ingredients) === null || _d === void 0 ? void 0 : _d.length),
-            hasInstructions: !!((_f = (_e = result.recipe) === null || _e === void 0 ? void 0 : _e.instructions) === null || _f === void 0 ? void 0 : _f.length)
+            candidateTitle: (_f = result.recipe) === null || _f === void 0 ? void 0 : _f.title,
+            hasIngredients: !!((_h = (_g = result.recipe) === null || _g === void 0 ? void 0 : _g.ingredients) === null || _h === void 0 ? void 0 : _h.length),
+            hasInstructions: !!((_k = (_j = result.recipe) === null || _j === void 0 ? void 0 : _j.instructions) === null || _k === void 0 ? void 0 : _k.length)
         });
         try {
             const enhancedAI = new enhancedAIService_1.EnhancedAIService();
             let fallbackLevel = 'detailed';
-            if (result.confidence > 0.2 && ((_g = result.recipe) === null || _g === void 0 ? void 0 : _g.title)) {
+            if (result.confidence > 0.2 && ((_l = result.recipe) === null || _l === void 0 ? void 0 : _l.title)) {
                 fallbackLevel = 'fast';
             }
             else if (result.confidence < 0.05 || !result.recipe) {
@@ -530,9 +551,9 @@ async function extractRecipeFromHtml(url, html) {
             }
             const aiResult = await enhancedAI.extractRecipeWithAI(url, html, {
                 hints: {
-                    title: (_h = result.recipe) === null || _h === void 0 ? void 0 : _h.title,
-                    ingredients: (_j = result.recipe) === null || _j === void 0 ? void 0 : _j.ingredients,
-                    partialInstructions: (_k = result.recipe) === null || _k === void 0 ? void 0 : _k.instructions
+                    title: (_m = result.recipe) === null || _m === void 0 ? void 0 : _m.title,
+                    ingredients: (_o = result.recipe) === null || _o === void 0 ? void 0 : _o.ingredients,
+                    partialInstructions: (_p = result.recipe) === null || _p === void 0 ? void 0 : _p.instructions
                 },
                 fallbackLevel,
                 includePartialData: true
@@ -551,8 +572,8 @@ async function extractRecipeFromHtml(url, html) {
             console.error('Scrape debug: Enhanced AI fallback failed (html)', {
                 error: aiError instanceof Error ? aiError.message : String(aiError)
             });
-            if (result.recipe && (result.recipe.title || ((_l = result.recipe.ingredients) === null || _l === void 0 ? void 0 : _l.length))) {
-                throw new Error(`Partial recipe data found but incomplete. Issues: ${((_m = result.issues) === null || _m === void 0 ? void 0 : _m.join(', ')) || 'Unknown'}`);
+            if (result.recipe && (result.recipe.title || ((_q = result.recipe.ingredients) === null || _q === void 0 ? void 0 : _q.length))) {
+                throw new Error(`Partial recipe data found but incomplete. Issues: ${((_r = result.issues) === null || _r === void 0 ? void 0 : _r.join(', ')) || 'Unknown'}`);
             }
             throw new Error('No recipe data found on this page and AI extraction failed');
         }
@@ -570,7 +591,7 @@ async function extractRecipeFromHtml(url, html) {
     }
 }
 async function extractRecipeFromUrl(url) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
     try {
         const cached = await getRecipeFromCache(url);
         if (cached) {
@@ -611,6 +632,13 @@ async function extractRecipeFromUrl(url) {
             if (!result.recipe.image) {
                 result.recipe.image = extractImageFromMetaTags($);
             }
+            if (result.recipe) {
+                const meta = extractJsonLdRecipeMeta($);
+                result.recipe.servings = (_d = result.recipe.servings) !== null && _d !== void 0 ? _d : meta.servings;
+                result.recipe.prepTime = (_e = result.recipe.prepTime) !== null && _e !== void 0 ? _e : meta.prepTime;
+                result.recipe.cookTime = (_f = result.recipe.cookTime) !== null && _f !== void 0 ? _f : meta.cookTime;
+                result.recipe.totalTime = (_g = result.recipe.totalTime) !== null && _g !== void 0 ? _g : meta.totalTime;
+            }
             try {
                 const validated = validateAndCleanRecipe(result.recipe, url);
                 if (validated) {
@@ -638,15 +666,15 @@ async function extractRecipeFromUrl(url) {
         console.log('Scrape debug: Falling back to AI extraction', {
             reason: result.confidence < 0.3 ? 'low_confidence' : 'validation_failed',
             confidence: result.confidence,
-            candidateTitle: (_d = result.recipe) === null || _d === void 0 ? void 0 : _d.title,
-            hasIngredients: !!((_f = (_e = result.recipe) === null || _e === void 0 ? void 0 : _e.ingredients) === null || _f === void 0 ? void 0 : _f.length),
-            hasInstructions: !!((_h = (_g = result.recipe) === null || _g === void 0 ? void 0 : _g.instructions) === null || _h === void 0 ? void 0 : _h.length)
+            candidateTitle: (_h = result.recipe) === null || _h === void 0 ? void 0 : _h.title,
+            hasIngredients: !!((_k = (_j = result.recipe) === null || _j === void 0 ? void 0 : _j.ingredients) === null || _k === void 0 ? void 0 : _k.length),
+            hasInstructions: !!((_m = (_l = result.recipe) === null || _l === void 0 ? void 0 : _l.instructions) === null || _m === void 0 ? void 0 : _m.length)
         });
         try {
             const enhancedAI = new enhancedAIService_1.EnhancedAIService();
             // Choose AI fallback strategy based on confidence level and available data
             let fallbackLevel = 'detailed';
-            if (result.confidence > 0.2 && ((_j = result.recipe) === null || _j === void 0 ? void 0 : _j.title)) {
+            if (result.confidence > 0.2 && ((_o = result.recipe) === null || _o === void 0 ? void 0 : _o.title)) {
                 fallbackLevel = 'fast'; // Quick enhancement for partial data
             }
             else if (result.confidence < 0.05 || !result.recipe) {
@@ -654,9 +682,9 @@ async function extractRecipeFromUrl(url) {
             }
             const aiResult = await enhancedAI.extractRecipeWithAI(url, requestResult.data, {
                 hints: {
-                    title: (_k = result.recipe) === null || _k === void 0 ? void 0 : _k.title,
-                    ingredients: (_l = result.recipe) === null || _l === void 0 ? void 0 : _l.ingredients,
-                    partialInstructions: (_m = result.recipe) === null || _m === void 0 ? void 0 : _m.instructions
+                    title: (_p = result.recipe) === null || _p === void 0 ? void 0 : _p.title,
+                    ingredients: (_q = result.recipe) === null || _q === void 0 ? void 0 : _q.ingredients,
+                    partialInstructions: (_r = result.recipe) === null || _r === void 0 ? void 0 : _r.instructions
                 },
                 fallbackLevel,
                 includePartialData: true
@@ -676,8 +704,8 @@ async function extractRecipeFromUrl(url) {
                 error: aiError instanceof Error ? aiError.message : String(aiError)
             });
             // If we have any recipe data at all with issues, include them in the error
-            if (result.recipe && (result.recipe.title || ((_o = result.recipe.ingredients) === null || _o === void 0 ? void 0 : _o.length))) {
-                throw new Error(`Partial recipe data found but incomplete. Issues: ${((_p = result.issues) === null || _p === void 0 ? void 0 : _p.join(', ')) || 'Unknown'}`);
+            if (result.recipe && (result.recipe.title || ((_s = result.recipe.ingredients) === null || _s === void 0 ? void 0 : _s.length))) {
+                throw new Error(`Partial recipe data found but incomplete. Issues: ${((_t = result.issues) === null || _t === void 0 ? void 0 : _t.join(', ')) || 'Unknown'}`);
             }
             throw new Error('No recipe data found on this page and AI extraction failed');
         }
@@ -692,16 +720,16 @@ async function extractRecipeFromUrl(url) {
             if (error.code === 'ENOTFOUND') {
                 throw new Error('Website not found');
             }
-            if (((_q = error.response) === null || _q === void 0 ? void 0 : _q.status) === 404) {
+            if (((_u = error.response) === null || _u === void 0 ? void 0 : _u.status) === 404) {
                 throw new Error('Recipe page not found');
             }
-            if (((_r = error.response) === null || _r === void 0 ? void 0 : _r.status) === 403) {
+            if (((_v = error.response) === null || _v === void 0 ? void 0 : _v.status) === 403) {
                 throw new Error('This website blocks automated recipe imports. Please try copying the recipe manually or use a different website.');
             }
-            if (((_s = error.response) === null || _s === void 0 ? void 0 : _s.status) === 429) {
+            if (((_w = error.response) === null || _w === void 0 ? void 0 : _w.status) === 429) {
                 throw new Error('This website is rate limiting requests. Please try again later.');
             }
-            if (((_t = error.response) === null || _t === void 0 ? void 0 : _t.status) === 500 || ((_u = error.response) === null || _u === void 0 ? void 0 : _u.status) === 502 || ((_v = error.response) === null || _v === void 0 ? void 0 : _v.status) === 503) {
+            if (((_x = error.response) === null || _x === void 0 ? void 0 : _x.status) === 500 || ((_y = error.response) === null || _y === void 0 ? void 0 : _y.status) === 502 || ((_z = error.response) === null || _z === void 0 ? void 0 : _z.status) === 503) {
                 throw new Error('The website is temporarily unavailable. Please try again later.');
             }
             if (error.code === 'ECONNABORTED') {
@@ -827,6 +855,471 @@ function extractImageFromMetaTags($) {
             }
         }
     }
+    return undefined;
+}
+function extractJsonLdRecipeMeta($) {
+    const jsonLdScripts = $('script[type="application/ld+json"]');
+    const extractText = (value) => {
+        if (typeof value === 'string')
+            return value;
+        if (value && value.text)
+            return value.text;
+        if (value && value['@value'])
+            return value['@value'];
+        return '';
+    };
+    const extractNumber = (value) => {
+        if (typeof value === 'number')
+            return value;
+        if (typeof value === 'string') {
+            const str = value.toString().trim();
+            const numberMatch = str.match(/(\d+(?:\.\d+)?)/);
+            if (numberMatch) {
+                const num = parseFloat(numberMatch[1]);
+                return !isNaN(num) ? num : undefined;
+            }
+        }
+        return undefined;
+    };
+    const extractTime = (duration) => {
+        if (!duration)
+            return '';
+        if (typeof duration === 'string') {
+            const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
+            if (match) {
+                const hours = match[1] ? parseInt(match[1]) : 0;
+                const minutes = match[2] ? parseInt(match[2]) : 0;
+                if (hours && minutes)
+                    return `${hours}h ${minutes}min`;
+                if (hours)
+                    return `${hours}h`;
+                if (minutes)
+                    return `${minutes}min`;
+            }
+        }
+        return extractText(duration);
+    };
+    const findRecipe = (data) => {
+        if (!data)
+            return undefined;
+        if (Array.isArray(data)) {
+            for (const item of data) {
+                const found = findRecipe(item);
+                if (found)
+                    return found;
+            }
+            return undefined;
+        }
+        if (data['@type'] === 'Recipe')
+            return data;
+        if (Array.isArray(data['@type']) && data['@type'].includes('Recipe'))
+            return data;
+        if (data['@graph'])
+            return findRecipe(data['@graph']);
+        return undefined;
+    };
+    for (let i = 0; i < jsonLdScripts.length; i++) {
+        const scriptContent = $(jsonLdScripts[i]).html();
+        if (!scriptContent)
+            continue;
+        try {
+            const data = JSON.parse(scriptContent);
+            const recipe = findRecipe(data);
+            if (recipe) {
+                return {
+                    servings: extractNumber(recipe.recipeYield || recipe.yield),
+                    prepTime: extractTime(recipe.prepTime),
+                    cookTime: extractTime(recipe.cookTime),
+                    totalTime: extractTime(recipe.totalTime)
+                };
+            }
+        }
+        catch (_a) {
+            continue;
+        }
+    }
+    return {};
+}
+function resolveAbsoluteUrl(baseUrl, imageUrl) {
+    try {
+        if (!imageUrl)
+            return undefined;
+        if (imageUrl.startsWith('//')) {
+            return `https:${imageUrl}`;
+        }
+        return new URL(imageUrl, baseUrl).toString();
+    }
+    catch (_a) {
+        return undefined;
+    }
+}
+function isLikelyBadImageUrl(imageUrl) {
+    const lowered = imageUrl.toLowerCase();
+    // Reject SVG and ICO files
+    if (lowered.endsWith('.svg') || lowered.endsWith('.ico'))
+        return true;
+    // Use word-boundary matching for bad tokens to avoid false positives
+    // (e.g., don't reject "Pad-Thai" because it contains "ad")
+    const badTokens = ['logo', 'icon', 'sprite', 'avatar', 'ad', 'banner', 'placeholder', 'pixel', 'spacer'];
+    for (const token of badTokens) {
+        // Match token as whole word with word boundaries
+        const regex = new RegExp(`\\b${token}\\b`, 'i');
+        if (regex.test(lowered)) {
+            return true;
+        }
+    }
+    return false;
+}
+function extractImageFromJsonLd($, baseUrl) {
+    var _a, _b;
+    const jsonLdScripts = $('script[type="application/ld+json"]');
+    const normalizeImageEntry = (value) => {
+        if (!value)
+            return {};
+        if (typeof value === 'string') {
+            return { url: resolveAbsoluteUrl(baseUrl, value) };
+        }
+        if (typeof value === 'object') {
+            const rawUrl = value.url || value['@id'] || value.contentUrl;
+            const width = typeof value.width === 'number' ? value.width : parseInt(value.width || '', 10);
+            const height = typeof value.height === 'number' ? value.height : parseInt(value.height || '', 10);
+            return { url: typeof rawUrl === 'string' ? resolveAbsoluteUrl(baseUrl, rawUrl) : undefined, width, height };
+        }
+        return {};
+    };
+    const pickBestImage = (value) => {
+        if (!value)
+            return undefined;
+        const entries = Array.isArray(value) ? value.map(normalizeImageEntry) : [normalizeImageEntry(value)];
+        const filtered = entries.filter((entry) => {
+            if (!entry.url || isLikelyBadImageUrl(entry.url))
+                return false;
+            if (Number.isFinite(entry.width) && entry.width < 400)
+                return false;
+            return true;
+        });
+        if (filtered.length === 0)
+            return undefined;
+        const scored = filtered
+            .map((entry) => (Object.assign(Object.assign({}, entry), { score: Number.isFinite(entry.width) ? entry.width : Number.isFinite(entry.height) ? entry.height : 0 })))
+            .sort((a, b) => b.score - a.score);
+        return scored[0].url;
+    };
+    const findRecipeNode = (data) => {
+        if (!data)
+            return undefined;
+        if (Array.isArray(data)) {
+            for (const item of data) {
+                const found = findRecipeNode(item);
+                if (found)
+                    return found;
+            }
+            return undefined;
+        }
+        if (data['@type'] === 'Recipe')
+            return data;
+        if (data['@graph'])
+            return findRecipeNode(data['@graph']);
+        return undefined;
+    };
+    for (let i = 0; i < jsonLdScripts.length; i++) {
+        const scriptContent = $(jsonLdScripts[i]).html();
+        if (!scriptContent)
+            continue;
+        try {
+            const data = JSON.parse(scriptContent);
+            const recipeNode = findRecipeNode(data);
+            if (recipeNode) {
+                // Primary location: recipe.image
+                let candidate = pickBestImage(recipeNode.image);
+                if (candidate)
+                    return candidate;
+                // Alternative: AggregateRating.image (rated recipes)
+                if ((_a = recipeNode.aggregateRating) === null || _a === void 0 ? void 0 : _a.image) {
+                    candidate = pickBestImage(recipeNode.aggregateRating.image);
+                    if (candidate)
+                        return candidate;
+                }
+            }
+            // Alternative: root-level image property (some schemas use this)
+            if (data.image) {
+                const candidate = pickBestImage(data.image);
+                if (candidate)
+                    return candidate;
+            }
+            // Alternative: mainEntity.image (nested recipe schemas)
+            if ((_b = data.mainEntity) === null || _b === void 0 ? void 0 : _b.image) {
+                const candidate = pickBestImage(data.mainEntity.image);
+                if (candidate)
+                    return candidate;
+            }
+        }
+        catch (_c) {
+            continue;
+        }
+    }
+    return undefined;
+}
+function extractImageFromOpenGraph($, baseUrl) {
+    const content = $('meta[property="og:image"], meta[property="og:image:url"]').first().attr('content');
+    return content ? resolveAbsoluteUrl(baseUrl, content) : undefined;
+}
+function extractImageFromTwitter($, baseUrl) {
+    const content = $('meta[name="twitter:image"], meta[name="twitter:image:src"]').first().attr('content');
+    return content ? resolveAbsoluteUrl(baseUrl, content) : undefined;
+}
+function extractImageCandidatesFromImgTags($, baseUrl) {
+    const candidates = [];
+    $('img').each((_, el) => {
+        const $el = $(el);
+        // Check all common lazy-loading patterns
+        const lazyAttributes = [
+            'src',
+            'data-src',
+            'data-lazy-src',
+            'data-original',
+            'data-lazy',
+            'data-real-src',
+            'data-enlarge-src',
+            'data-srcset', // Responsive lazy loading
+        ];
+        let rawUrl;
+        for (const attr of lazyAttributes) {
+            const value = $el.attr(attr);
+            if (value && value.trim() && !value.startsWith('data:')) {
+                rawUrl = value.trim();
+                // For srcset, extract first URL
+                if (attr === 'data-srcset') {
+                    rawUrl = value.split(',')[0].trim().split(/\s+/)[0];
+                }
+                break;
+            }
+        }
+        if (!rawUrl)
+            return;
+        let resolved = resolveAbsoluteUrl(baseUrl, rawUrl);
+        if (!resolved || isLikelyBadImageUrl(resolved))
+            return;
+        // Check if there's a higher-res version in srcset
+        const srcset = $el.attr('srcset');
+        if (srcset) {
+            // Parse srcset: "image-400.jpg 400w, image-800.jpg 800w, image-1200.jpg 1200w"
+            const sources = srcset.split(',').map((s) => s.trim());
+            let maxWidth = 0;
+            let bestSource = resolved;
+            for (const source of sources) {
+                const parts = source.split(/\s+/);
+                if (parts.length >= 2) {
+                    const widthMatch = parts[1].match(/^(\d+)w$/);
+                    if (widthMatch) {
+                        const width = parseInt(widthMatch[1], 10);
+                        if (width > maxWidth) {
+                            maxWidth = width;
+                            bestSource = parts[0];
+                        }
+                    }
+                }
+            }
+            // Prefer higher-res if available
+            if (maxWidth >= 600) {
+                const higherResResolved = resolveAbsoluteUrl(baseUrl, bestSource);
+                if (higherResResolved && !isLikelyBadImageUrl(higherResResolved)) {
+                    resolved = higherResResolved;
+                }
+            }
+        }
+        let score = 0;
+        const width = parseInt($el.attr('width') || '', 10);
+        const height = parseInt($el.attr('height') || '', 10);
+        if (!isNaN(width) && width < 300)
+            return;
+        if (!isNaN(width)) {
+            if (width >= 600)
+                score += 3;
+            else if (width >= 400)
+                score += 2;
+        }
+        if (!isNaN(height)) {
+            if (height >= 400)
+                score += 2;
+            else if (height >= 300)
+                score += 1;
+        }
+        if (!isNaN(width) && !isNaN(height) && height > 0) {
+            const ratio = width / height;
+            if (ratio >= 1.2 && ratio <= 2.2)
+                score += 2;
+        }
+        const className = `${$el.attr('class') || ''} ${$el.parent().attr('class') || ''}`.toLowerCase();
+        if (className.includes('recipe') || className.includes('hero') || className.includes('featured'))
+            score += 2;
+        if (className.includes('nav') || className.includes('footer') || className.includes('aside'))
+            score -= 4;
+        const inRecipeContainer = $el.closest('article, .recipe, .entry-content, .post-content').length > 0;
+        if (inRecipeContainer)
+            score += 3;
+        const lowered = resolved.toLowerCase();
+        if (lowered.includes('recipe') || lowered.includes('hero') || lowered.includes('featured') || lowered.includes('main'))
+            score += 2;
+        if (isLikelyBadImageUrl(lowered))
+            score -= 5;
+        candidates.push({ url: resolved, score });
+    });
+    return candidates
+        .sort((a, b) => b.score - a.score)
+        .map((candidate) => candidate.url);
+}
+function extractImageFromPictureElements($, baseUrl) {
+    const pictureElements = $('picture');
+    for (let i = 0; i < pictureElements.length; i++) {
+        const $picture = $(pictureElements[i]);
+        // Check source elements first (higher quality options)
+        const sources = $picture.find('source');
+        for (let j = 0; j < sources.length; j++) {
+            const $source = $(sources[j]);
+            const srcset = $source.attr('srcset');
+            if (srcset) {
+                // Extract first URL from srcset (usually highest quality)
+                const firstUrl = srcset.split(',')[0].trim().split(/\s+/)[0];
+                if (firstUrl && !firstUrl.startsWith('data:')) {
+                    const resolved = resolveAbsoluteUrl(baseUrl, firstUrl);
+                    if (resolved && !isLikelyBadImageUrl(resolved)) {
+                        return resolved;
+                    }
+                }
+            }
+        }
+        // Fallback to img element inside picture
+        const $img = $picture.find('img');
+        if ($img.length > 0) {
+            const src = $img.first().attr('src');
+            if (src && !src.startsWith('data:')) {
+                const resolved = resolveAbsoluteUrl(baseUrl, src);
+                if (resolved && !isLikelyBadImageUrl(resolved)) {
+                    return resolved;
+                }
+            }
+        }
+    }
+    return undefined;
+}
+async function validateImageUrl(imageUrl) {
+    if (!imageUrl) {
+        console.log('[validateImageUrl] Empty URL');
+        return false;
+    }
+    if (isLikelyBadImageUrl(imageUrl)) {
+        console.log('[validateImageUrl] Rejected as likely bad image:', imageUrl);
+        return false;
+    }
+    try {
+        const response = await axios_1.default.head(imageUrl, {
+            timeout: 8000,
+            maxRedirects: 3,
+            validateStatus: (status) => status >= 200 && status < 400
+        });
+        const contentType = response.headers['content-type'] || '';
+        const contentLength = parseInt(response.headers['content-length'] || '0', 10);
+        if (!contentType.startsWith('image/')) {
+            console.log('[validateImageUrl] Invalid content-type:', { url: imageUrl, contentType });
+            return false;
+        }
+        if (contentLength && contentLength < 15 * 1024) {
+            console.log('[validateImageUrl] Image too small:', { url: imageUrl, sizeKB: Math.round(contentLength / 1024) });
+            return false;
+        }
+        console.log('[validateImageUrl] ✅ Valid image:', { url: imageUrl, contentType, sizeKB: Math.round(contentLength / 1024) });
+        return true;
+    }
+    catch (error) {
+        console.log('[validateImageUrl] Validation error:', {
+            url: imageUrl,
+            error: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+    }
+}
+async function resolveRecipeImage(url, htmlPayload) {
+    let freshHtml;
+    try {
+        const requestResult = await enhancedRequestService_1.enhancedRequestService.fetchWithRetry(url, {
+            timeout: 12000,
+            retries: 2,
+            delay: 1500,
+            userAgent: 'chrome'
+        });
+        freshHtml = requestResult.data;
+    }
+    catch (error) {
+        console.warn('Image fetch failed, falling back to client HTML:', {
+            url,
+            error: error instanceof Error ? error.message : String(error)
+        });
+    }
+    const html = freshHtml || htmlPayload;
+    if (!html) {
+        console.log('[resolveRecipeImage] No HTML available for image extraction');
+        return undefined;
+    }
+    console.log('[resolveRecipeImage] Starting image extraction:', {
+        url,
+        usingFreshHtml: !!freshHtml,
+        usingClientHtml: !freshHtml && !!htmlPayload,
+        htmlLength: html.length
+    });
+    const $ = cheerio.load(html);
+    // Extract Instagram meta tag
+    const instagramImage = $('meta[property="instagram:image"]').first().attr('content');
+    const resolvedInstagramImage = instagramImage ? resolveAbsoluteUrl(url, instagramImage) : undefined;
+    // Extract Pinterest meta tag
+    const pinterestImage = $('meta[name="pinterest:media"]').first().attr('content');
+    const resolvedPinterestImage = pinterestImage ? resolveAbsoluteUrl(url, pinterestImage) : undefined;
+    // Extract image_src link tag
+    const imageSrcLink = $('link[rel="image_src"]').first().attr('href');
+    const resolvedImageSrcLink = imageSrcLink ? resolveAbsoluteUrl(url, imageSrcLink) : undefined;
+    const jsonLdImage = extractImageFromJsonLd($, url);
+    const ogImage = extractImageFromOpenGraph($, url);
+    const twitterImage = extractImageFromTwitter($, url);
+    const pictureImage = extractImageFromPictureElements($, url);
+    const imgTagCandidates = extractImageCandidatesFromImgTags($, url);
+    console.log('[resolveRecipeImage] Extraction results:', {
+        jsonLdImage,
+        ogImage,
+        twitterImage,
+        instagramImage: resolvedInstagramImage,
+        pinterestImage: resolvedPinterestImage,
+        imageSrcLink: resolvedImageSrcLink,
+        pictureImage,
+        imgTagCount: imgTagCandidates.length,
+        firstImgTag: imgTagCandidates[0]
+    });
+    const candidates = [
+        jsonLdImage,
+        ogImage,
+        twitterImage,
+        resolvedInstagramImage,
+        resolvedPinterestImage,
+        resolvedImageSrcLink,
+        pictureImage,
+        ...imgTagCandidates
+    ].filter(Boolean);
+    console.log(`[resolveRecipeImage] Found ${candidates.length} image candidates, validating...`);
+    const seen = new Set();
+    for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i];
+        if (seen.has(candidate))
+            continue;
+        seen.add(candidate);
+        console.log(`[resolveRecipeImage] Validating candidate ${i + 1}/${candidates.length}:`, candidate);
+        if (await validateImageUrl(candidate)) {
+            console.log(`[resolveRecipeImage] ✅ Found valid image (candidate ${i + 1}):`, candidate);
+            return candidate;
+        }
+        else {
+            console.log(`[resolveRecipeImage] ❌ Validation failed for candidate ${i + 1}`);
+        }
+    }
+    console.log('[resolveRecipeImage] No valid image found after checking all candidates');
     return undefined;
 }
 // @ts-ignore - Legacy function, will be removed
@@ -1483,8 +1976,7 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
             res.status(400).json({ error: 'Invalid URL format' });
             return;
         }
-        // Check rate limits using improved rolling window system
-        await checkRateLimit(decodedToken.uid, 'import');
+        // No rate limit for imports; only AI conversions are limited.
         const htmlPayload = typeof html === 'string' && html.trim().length > 0 ? html : undefined;
         // Check global recipe cache first
         const cachedRecipe = await getRecipeFromCache(url);
@@ -1501,6 +1993,12 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
             issues = normalized.issues;
             confidence = 1.0;
             method = 'cache';
+            if (!recipe.image) {
+                const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+                if (resolvedImage) {
+                    recipe.image = resolvedImage;
+                }
+            }
         }
         else {
             console.log('Recipe not in cache, scraping:', { url, hasHtml: !!htmlPayload });
@@ -1514,6 +2012,10 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
                 issues = normalized.issues.concat(scraperResult.issues || []);
                 confidence = scraperResult.confidence;
                 method = scraperResult.method;
+                const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+                if (resolvedImage) {
+                    recipe.image = resolvedImage;
+                }
                 if (status === 'not_recipe') {
                     res.status(400).json({
                         error: 'Not a recipe',
@@ -1545,6 +2047,10 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
                 issues = normalized.issues;
                 confidence = 0.5;
                 method = 'ai-fallback';
+                const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+                if (resolvedImage) {
+                    recipe.image = resolvedImage;
+                }
                 if (status === 'not_recipe') {
                     res.status(400).json({
                         error: 'Not a recipe',
@@ -1598,12 +2104,14 @@ exports.importRecipeHttp = functions.https.onRequest(async (req, res) => {
             return;
         }
         // Rate limiting errors
-        if (((_c = error.message) === null || _c === void 0 ? void 0 : _c.includes('rate limit')) || ((_d = error.message) === null || _d === void 0 ? void 0 : _d.includes('Daily import limit reached'))) {
+        if (error.code === 'resource-exhausted' ||
+            ((_c = error.message) === null || _c === void 0 ? void 0 : _c.includes('rate limit')) ||
+            ((_d = error.message) === null || _d === void 0 ? void 0 : _d.includes('Daily import limit reached'))) {
             res.status(429).json({
                 error: 'Rate limit exceeded',
-                message: error.message,
+                message: error.message || 'Too many requests. Please try again soon.',
                 canRetry: false,
-                suggestion: 'Try again tomorrow or upgrade to premium'
+                suggestion: 'Please try again soon.'
             });
             return;
         }
@@ -1797,7 +2305,7 @@ exports.saveImportedRecipeHttp = functions.https.onRequest(async (req, res) => {
         });
     }
 });
-// Cloud Function to import recipes securely with rate limiting
+// Cloud Function to import recipes securely
 exports.importRecipeSecure = functions.https.onCall(async (data, context) => {
     var _a, _b, _c;
     try {
@@ -1818,8 +2326,7 @@ exports.importRecipeSecure = functions.https.onCall(async (data, context) => {
         if (!isValidUrl(url)) {
             throw new functions.https.HttpsError('invalid-argument', 'Invalid URL format');
         }
-        // Check rate limits using improved rolling window system
-        await checkRateLimit(context.auth.uid, 'import');
+        // No rate limit for imports; only AI conversions are limited.
         // Check global recipe cache first
         const cachedRecipe = await getRecipeFromCache(url);
         let recipe;
@@ -2644,7 +3151,11 @@ async function createKidRecipeFromCache(recipeId, kidAge, readingLevel, cached, 
         estimatedDuration: cached.estimatedDuration,
         skillsRequired: cached.skillsRequired,
         conversionCount: 1,
-        isActive: true,
+        approvalStatus: 'pending',
+        approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvalReviewedAt: null,
+        approvalNotes: null,
+        isActive: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         // Allergy information (if available)
         allergyInfo: cached.allergyInfo || null,
@@ -2727,7 +3238,7 @@ Return the response as JSON in this exact format:
 }`;
     try {
         const response = await openai.chat.completions.create({
-            model: 'gpt-4',
+            model: 'gpt-4o-mini',
             messages: [
                 {
                     role: 'system',
@@ -2738,6 +3249,7 @@ Return the response as JSON in this exact format:
                     content: prompt
                 }
             ],
+            response_format: { type: 'json_object' },
             temperature: 0.3,
             max_tokens: 4000,
         });
@@ -2802,7 +3314,11 @@ async function createKidRecipe(recipeId, kidAge, readingLevel, conversion, userI
         estimatedDuration: conversion.estimatedDuration,
         skillsRequired: conversion.skillsRequired,
         conversionCount: 1,
-        isActive: true,
+        approvalStatus: 'pending',
+        approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        approvalReviewedAt: null,
+        approvalNotes: null,
+        isActive: false,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         // Allergy information (if provided)
         allergyInfo: conversion.allergyInfo || null,

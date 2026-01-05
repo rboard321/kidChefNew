@@ -61,17 +61,21 @@ service cloud.firestore {
         // Owner via parentId (required - clean security)
         resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
       );
-      allow write: if isAuthenticated() && (
-        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
-      );
       allow create: if isAuthenticated() && (
         // New recipes MUST have parentId (enforced by flow guards)
         request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)
       );
+      allow update: if isAuthenticated() && (
+        // Can update if existing recipe belongs to user and parentId doesn't change
+        resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId
+      );
       allow delete: if isAuthenticated() && (
         resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)
       );
-      allow list: if isAuthenticated();
+      allow list: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId);
     }
 
     // Kid-friendly recipes - only parent can access their kids' recipes (parentId-based only)
@@ -79,8 +83,10 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         // Parent can access via parentId (required - no legacy fallback)
         (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)) ||
-        // Allow querying by kidId if user is parent of that kid
-        (resource.data.kidId != null && isParentOfKid(resource.data.kidId))
+        // Kids can only access approved recipes
+        (resource.data.kidId != null &&
+          isParentOfKid(resource.data.kidId) &&
+          resource.data.approvalStatus == 'approved')
       );
       allow create: if isAuthenticated() && (
         // New kidRecipes must use parentId (required - no legacy fallback)
@@ -89,7 +95,14 @@ service cloud.firestore {
       allow update: if isAuthenticated() && (
         // Parent can update via parentId - check both existing and new data
         (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)) &&
-        (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId))
+        (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)) &&
+        // Only allow approval-related field changes
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus',
+          'approvalReviewedAt',
+          'approvalNotes',
+          'isActive'
+        ]))
       );
       allow delete: if isAuthenticated() && (
         // Parent can delete via parentId (required - no legacy fallback)
@@ -208,20 +221,6 @@ service cloud.firestore {
     match /rateLimits/{userId} {
       allow read, write: if isOwner(userId);
       allow create: if isAuthenticated() && userId == request.auth.uid;
-    }
-
-    // COPPA Compliance: Parental Consent records
-    match /parentalConsents/{consentId} {
-      allow read, write: if isAuthenticated() && (
-        // Parent can access their own consent records
-        resource.data.userId == request.auth.uid
-      );
-      allow create: if isAuthenticated() && (
-        request.resource.data.userId == request.auth.uid
-      );
-      allow list: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid
-      );
     }
 
     // COPPA Compliance: Parental Notice records

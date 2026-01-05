@@ -68,7 +68,7 @@ YOUR PARENTAL RIGHTS:
 • Refuse further collection of information
 • Update or correct any information
 
-To exercise these rights, reply to this email or contact us at board.ricky@gmail.com.
+To exercise these rights, reply to this email or contact us at kidchefapp@gmail.com.
 
 Best regards,
 The KidChef Team`,

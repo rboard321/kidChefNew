@@ -7,21 +7,22 @@ import {
   Switch,
   ScrollView,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { BugReportModal } from '../../components/BugReportModal';
-import { featureFlags, getAppVersionString } from '../../utils/environment';
+import { featureFlags, getAppVersionString, config } from '../../utils/environment';
+import { kidProgressService } from '../../services/kidProgressService';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { signOut } = useAuth();
+  const { signOut, kidProfiles } = useAuth();
   const [safetyNotes, setSafetyNotes] = useState(true);
-  const [readAloud, setReadAloud] = useState(true);
-  const [autoSimplify, setAutoSimplify] = useState(false);
+  const [readAloud, setReadAloud] = useState(false);
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [bugReportVisible, setBugReportVisible] = useState(false);
@@ -53,15 +54,17 @@ export default function SettingsScreen() {
     description,
     value,
     onValueChange,
-    icon
+    icon,
+    disabled
   }: {
     title: string;
     description: string;
     value: boolean;
     onValueChange: (value: boolean) => void;
     icon: string;
+    disabled?: boolean;
   }) => (
-    <View style={styles.settingItem}>
+    <View style={[styles.settingItem, disabled && styles.settingItemDisabled]}>
       <View style={styles.settingIcon}>
         <Text style={styles.iconText}>{icon}</Text>
       </View>
@@ -72,23 +75,80 @@ export default function SettingsScreen() {
       <Switch
         value={value}
         onValueChange={onValueChange}
+        disabled={disabled}
         trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
         thumbColor={value ? '#2563eb' : '#f3f4f6'}
       />
     </View>
   );
 
-  const ActionButton = ({ title, icon, onPress, color = '#2563eb' }: {
+  const ActionButton = ({ title, icon, onPress, color = '#2563eb', disabled, subtitle }: {
     title: string;
     icon: string;
     onPress: () => void;
     color?: string;
+    disabled?: boolean;
+    subtitle?: string;
   }) => (
-    <TouchableOpacity style={[styles.actionButton, { borderColor: color }]} onPress={onPress}>
+    <TouchableOpacity
+      style={[
+        styles.actionButton,
+        { borderColor: color },
+        disabled && styles.actionButtonDisabled
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+    >
       <Text style={styles.actionIcon}>{icon}</Text>
-      <Text style={[styles.actionTitle, { color }]}>{title}</Text>
+      <View style={styles.actionTextBlock}>
+        <Text style={[styles.actionTitle, { color }]}>{title}</Text>
+        {subtitle && <Text style={styles.actionSubtitle}>{subtitle}</Text>}
+      </View>
     </TouchableOpacity>
   );
+
+  const openSupportEmail = (subject: string) => {
+    const url = `mailto:${config.supportEmail}?subject=${encodeURIComponent(subject)}`;
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Unable to Open Email', `Please email us at ${config.supportEmail}.`);
+    });
+  };
+
+  const openFamilyProfiles = () => {
+    const parentNav = navigation.getParent();
+    if (parentNav) {
+      parentNav.navigate('Kids' as never);
+      return;
+    }
+    Alert.alert('Navigation Error', 'Unable to open family profiles right now.');
+  };
+
+  const handleResetProgress = () => {
+    if (!kidProfiles.length) {
+      Alert.alert('No Kids Found', 'Create a kid profile first.');
+      return;
+    }
+    Alert.alert(
+      'Reset Kid Progress',
+      'Choose which kid to reset. This cannot be undone.',
+      [
+        ...kidProfiles.map((kid) => ({
+          text: kid.name,
+          style: 'destructive' as const,
+          onPress: async () => {
+            try {
+              await kidProgressService.resetProgress(kid.id);
+              Alert.alert('Reset Complete', `${kid.name}'s progress has been reset.`);
+            } catch (error) {
+              console.error('Reset progress failed:', error);
+              Alert.alert('Reset Failed', 'Please try again.');
+            }
+          }
+        })),
+        { text: 'Cancel', style: 'cancel' }
+      ]
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -111,18 +171,11 @@ export default function SettingsScreen() {
 
           <SettingItem
             title="Enable Read-Aloud Mode"
-            description="Kids can hear instructions spoken out loud"
+            description="Coming soon"
             value={readAloud}
             onValueChange={setReadAloud}
             icon="🔊"
-          />
-
-          <SettingItem
-            title="Auto-Simplify Recipes"
-            description="Automatically convert all recipes to kid-friendly versions"
-            value={autoSimplify}
-            onValueChange={setAutoSimplify}
-            icon="✨"
+            disabled
           />
         </View>
 
@@ -139,10 +192,11 @@ export default function SettingsScreen() {
 
           <SettingItem
             title="Dark Mode"
-            description="Switch to dark theme"
+            description="Coming soon"
             value={darkMode}
             onValueChange={setDarkMode}
             icon="🌙"
+            disabled
           />
         </View>
 
@@ -152,19 +206,21 @@ export default function SettingsScreen() {
           <ActionButton
             title="Manage Family Profiles"
             icon="👨‍👩‍👧‍👦"
-            onPress={() => console.log('Manage profiles')}
+            onPress={openFamilyProfiles}
           />
 
           <ActionButton
             title="Export Recipes"
             icon="📤"
-            onPress={() => console.log('Export recipes')}
+            onPress={() => {}}
+            disabled
+            subtitle="Coming soon"
           />
 
           <ActionButton
             title="Reset Kid Progress"
             icon="🔄"
-            onPress={() => console.log('Reset progress')}
+            onPress={handleResetProgress}
           />
         </View>
 
@@ -174,7 +230,7 @@ export default function SettingsScreen() {
           <ActionButton
             title="Help & FAQ"
             icon="❓"
-            onPress={() => console.log('Help')}
+            onPress={() => openSupportEmail('KidChef Help')}
           />
 
           <ActionButton
@@ -192,13 +248,15 @@ export default function SettingsScreen() {
           <ActionButton
             title="Contact Support"
             icon="💬"
-            onPress={() => console.log('Contact support')}
+            onPress={() => openSupportEmail('KidChef Support')}
           />
 
           <ActionButton
             title="Rate KidChef"
             icon="⭐"
-            onPress={() => console.log('Rate app')}
+            onPress={() => {}}
+            disabled
+            subtitle="Coming soon"
           />
 
           {showBugReport && (
@@ -279,6 +337,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
+  settingItemDisabled: {
+    opacity: 0.55,
+  },
   settingIcon: {
     width: 40,
     height: 40,
@@ -312,15 +373,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
   },
+  actionButtonDisabled: {
+    opacity: 0.55,
+  },
   actionIcon: {
     fontSize: 20,
     marginRight: 15,
     width: 30,
     textAlign: 'center',
   },
+  actionTextBlock: {
+    flex: 1,
+  },
   actionTitle: {
     fontSize: 16,
     fontWeight: '500',
+  },
+  actionSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
   },
   footer: {
     padding: 30,

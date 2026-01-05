@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,32 +16,104 @@ import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { recipeService } from '../../services/recipes';
 import { cacheService } from '../../services/cacheService';
-import { Toast } from '../../components/Toast';
+import type { Recipe } from '../../types';
 
-type ManualEntryParams = {
-  ManualEntry: {
-    failedUrl?: string;
-    errorMessage?: string;
+type RecipeEditParams = {
+  RecipeEdit: {
+    recipeId: string;
   };
 };
 
-type ManualEntryRouteProp = RouteProp<ManualEntryParams, 'ManualEntry'>;
+type RecipeEditRouteProp = RouteProp<RecipeEditParams, 'RecipeEdit'>;
 
-export const ManualEntryScreen: React.FC = () => {
-  const route = useRoute<ManualEntryRouteProp>();
+export const RecipeEditScreen: React.FC = () => {
+  const route = useRoute<RecipeEditRouteProp>();
   const navigation = useNavigation();
   const { user, parentProfile } = useAuth();
 
-  const { failedUrl, errorMessage } = route.params || {};
+  const { recipeId } = route.params || {};
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetching, setIsFetching] = useState(true);
+  const [recipe, setRecipe] = useState<Recipe | null>(null);
+
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [ingredients, setIngredients] = useState<string[]>(['']);
   const [instructions, setInstructions] = useState<string[]>(['']);
   const [prepTime, setPrepTime] = useState('');
   const [cookTime, setCookTime] = useState('');
+  const [totalTime, setTotalTime] = useState('');
   const [servings, setServings] = useState('');
+  const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
+
+  // Load existing recipe data
+  useEffect(() => {
+    const loadRecipe = async () => {
+      if (!recipeId) {
+        Alert.alert('Error', 'Recipe ID not provided');
+        navigation.goBack();
+        return;
+      }
+
+      try {
+        setIsFetching(true);
+        const fetchedRecipe = await recipeService.getRecipe(recipeId);
+
+        if (!fetchedRecipe) {
+          Alert.alert('Error', 'Recipe not found');
+          navigation.goBack();
+          return;
+        }
+
+        setRecipe(fetchedRecipe);
+
+        // Pre-populate form fields
+        setTitle(fetchedRecipe.title || '');
+        setDescription(fetchedRecipe.description || '');
+
+        // Handle ingredients (support both string[] and Ingredient[] formats)
+        const ingredientStrings = fetchedRecipe.ingredients.map(ing => {
+          if (typeof ing === 'string') return ing;
+          // Format Ingredient object as string
+          const parts = [
+            ing.amount ? String(ing.amount) : '',
+            ing.unit || '',
+            ing.name || '',
+            ing.notes ? `(${ing.notes})` : ''
+          ].filter(Boolean);
+          return parts.join(' ');
+        });
+        setIngredients(ingredientStrings.length > 0 ? ingredientStrings : ['']);
+
+        // Handle instructions (support both instructions[] and steps[] formats)
+        const instructionStrings = fetchedRecipe.instructions?.length
+          ? fetchedRecipe.instructions
+          : fetchedRecipe.steps?.map(step => step.step) || [];
+        setInstructions(instructionStrings.length > 0 ? instructionStrings : ['']);
+
+        setPrepTime(formatTimeForInput(fetchedRecipe.prepTime) || '');
+        setCookTime(formatTimeForInput(fetchedRecipe.cookTime) || '');
+        setTotalTime(formatTimeForInput(fetchedRecipe.totalTime) || '');
+        setServings(fetchedRecipe.servings ? String(fetchedRecipe.servings) : '');
+        setDifficulty(fetchedRecipe.difficulty || 'easy');
+      } catch (error) {
+        console.error('Error loading recipe:', error);
+        Alert.alert('Error', 'Failed to load recipe. Please try again.');
+        navigation.goBack();
+      } finally {
+        setIsFetching(false);
+      }
+    };
+
+    loadRecipe();
+  }, [recipeId]);
+
+  const formatTimeForInput = (time: number | string | undefined): string => {
+    if (!time) return '';
+    if (typeof time === 'number') return `${time} min`;
+    return String(time);
+  };
 
   const addIngredient = () => {
     setIngredients([...ingredients, '']);
@@ -93,71 +165,55 @@ export const ManualEntryScreen: React.FC = () => {
       return;
     }
 
-    if (!user?.uid || !parentProfile?.id) {
-      Alert.alert('Error', 'User not authenticated');
+    if (!user?.uid || !parentProfile?.id || !recipeId) {
+      Alert.alert('Error', 'User not authenticated or recipe not found');
       return;
     }
 
     setIsLoading(true);
     try {
-      const recipe = {
+      const updates: Partial<Recipe> = {
         title: trimmedTitle,
         description: description.trim() || '',
-        image: getEmojiForRecipe(trimmedTitle),
         prepTime: prepTime.trim() || '',
         cookTime: cookTime.trim() || '',
+        totalTime: totalTime.trim() || '',
         servings: servings.trim() ? parseInt(servings.trim()) || 4 : 4,
-        difficulty: inferDifficulty(validInstructions.length, validIngredients.length),
+        difficulty,
         ingredients: validIngredients,
         instructions: validInstructions,
-        sourceUrl: failedUrl || '',
-        tags: ['manual-entry'],
-        mealType: 'Main Dish',
-        kidVersionId: null,
-        parentId: parentProfile.id,
+        parentId: parentProfile.id, // Preserve parentId for Firestore rules
       };
 
-      const recipeId = await recipeService.addRecipe(recipe, parentProfile.id);
+      await recipeService.updateRecipe(recipeId, updates);
 
       // Clear cache to refresh UI
       cacheService.invalidateRecipes(parentProfile.id);
+      cacheService.invalidateRecipeDetail(recipeId);
 
-      Toast.show({
-        type: 'success',
-        text1: 'Recipe Added!',
-        text2: 'Your recipe has been saved to the library',
-      });
-
-      navigation.navigate('Home' as never);
+      Alert.alert(
+        'Recipe Updated!',
+        'Your changes have been saved',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
     } catch (error) {
-      console.error('Error saving recipe:', error);
-      Alert.alert('Save Error', 'Failed to save recipe. Please try again.');
+      console.error('Error updating recipe:', error);
+      Alert.alert('Update Error', 'Failed to update recipe. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const getEmojiForRecipe = (title: string): string => {
-    const lowerTitle = title.toLowerCase();
-    if (lowerTitle.includes('cookie')) return '🍪';
-    if (lowerTitle.includes('cake') || lowerTitle.includes('cupcake')) return '🧁';
-    if (lowerTitle.includes('pancake')) return '🥞';
-    if (lowerTitle.includes('pasta') || lowerTitle.includes('spaghetti')) return '🍝';
-    if (lowerTitle.includes('pizza')) return '🍕';
-    if (lowerTitle.includes('burger')) return '🍔';
-    if (lowerTitle.includes('salad')) return '🥗';
-    if (lowerTitle.includes('soup')) return '🍲';
-    if (lowerTitle.includes('chicken')) return '🍗';
-    if (lowerTitle.includes('fish')) return '🐟';
-    if (lowerTitle.includes('bread')) return '🍞';
-    return '🍽️';
-  };
-
-  const inferDifficulty = (instructionCount: number, ingredientCount: number): string => {
-    if (instructionCount <= 5 && ingredientCount <= 8) return 'Easy';
-    if (instructionCount <= 10 && ingredientCount <= 15) return 'Medium';
-    return 'Hard';
-  };
+  if (isFetching) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={styles.loadingText}>Loading recipe...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -167,36 +223,13 @@ export const ManualEntryScreen: React.FC = () => {
       >
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Back</Text>
+            <Text style={styles.backButtonText}>← Cancel</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Add Recipe Manually</Text>
+          <Text style={styles.title}>Edit Recipe</Text>
           <View style={styles.placeholder} />
         </View>
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {failedUrl && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorTitle}>⚠️ Auto-import failed</Text>
-              <Text style={styles.errorText}>
-                We couldn't automatically import from: {failedUrl}
-              </Text>
-              {errorMessage && (
-                <Text style={styles.errorMessage}>{errorMessage}</Text>
-              )}
-              <Text style={styles.errorSuggestion}>
-                Please enter the recipe details manually below. This usually takes 2-3 minutes.
-              </Text>
-            </View>
-          )}
-
-          {!failedUrl && (
-            <View style={styles.infoBox}>
-              <Text style={styles.infoText}>
-                ✏️ Manually add a recipe to your KidChef library. Perfect for family recipes or when auto-import doesn't work!
-              </Text>
-            </View>
-          )}
-
           {/* Title */}
           <View style={styles.fieldContainer}>
             <Text style={styles.fieldLabel}>Recipe Title *</Text>
@@ -298,6 +331,18 @@ export const ManualEntryScreen: React.FC = () => {
                 placeholder="30 mins"
               />
             </View>
+          </View>
+
+          <View style={styles.metadataContainer}>
+            <View style={styles.metadataField}>
+              <Text style={styles.fieldLabel}>Total Time</Text>
+              <TextInput
+                style={styles.textInput}
+                value={totalTime}
+                onChangeText={setTotalTime}
+                placeholder="45 mins"
+              />
+            </View>
 
             <View style={styles.metadataField}>
               <Text style={styles.fieldLabel}>Servings</Text>
@@ -308,6 +353,37 @@ export const ManualEntryScreen: React.FC = () => {
                 placeholder="4"
                 keyboardType="numeric"
               />
+            </View>
+          </View>
+
+          {/* Difficulty */}
+          <View style={styles.fieldContainer}>
+            <Text style={styles.fieldLabel}>Difficulty</Text>
+            <View style={styles.difficultyButtons}>
+              <TouchableOpacity
+                style={[styles.difficultyButton, difficulty === 'easy' && styles.difficultyButtonActive]}
+                onPress={() => setDifficulty('easy')}
+              >
+                <Text style={[styles.difficultyButtonText, difficulty === 'easy' && styles.difficultyButtonTextActive]}>
+                  Easy
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.difficultyButton, difficulty === 'medium' && styles.difficultyButtonActive]}
+                onPress={() => setDifficulty('medium')}
+              >
+                <Text style={[styles.difficultyButtonText, difficulty === 'medium' && styles.difficultyButtonTextActive]}>
+                  Medium
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.difficultyButton, difficulty === 'hard' && styles.difficultyButtonActive]}
+                onPress={() => setDifficulty('hard')}
+              >
+                <Text style={[styles.difficultyButtonText, difficulty === 'hard' && styles.difficultyButtonTextActive]}>
+                  Hard
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -321,7 +397,7 @@ export const ManualEntryScreen: React.FC = () => {
             {isLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.saveButtonText}>Save Recipe</Text>
+              <Text style={styles.saveButtonText}>Save Changes</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -334,6 +410,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8f9fa',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#6b7280',
   },
   header: {
     flexDirection: 'row',
@@ -358,54 +444,11 @@ const styles = StyleSheet.create({
     color: '#333',
   },
   placeholder: {
-    width: 50,
+    width: 70,
   },
   content: {
     flex: 1,
     padding: 20,
-  },
-  errorBox: {
-    backgroundColor: '#fff5f5',
-    padding: 15,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#dc3545',
-    marginBottom: 20,
-  },
-  errorTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#721c24',
-    marginBottom: 5,
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#721c24',
-    marginBottom: 5,
-  },
-  errorMessage: {
-    fontSize: 12,
-    color: '#6c757d',
-    fontStyle: 'italic',
-    marginBottom: 5,
-  },
-  errorSuggestion: {
-    fontSize: 14,
-    color: '#721c24',
-    fontWeight: '500',
-  },
-  infoBox: {
-    backgroundColor: '#e7f3ff',
-    padding: 15,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#007AFF',
-    marginBottom: 20,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#004085',
-    lineHeight: 20,
   },
   fieldContainer: {
     marginBottom: 20,
@@ -490,9 +533,35 @@ const styles = StyleSheet.create({
   metadataContainer: {
     flexDirection: 'row',
     gap: 15,
+    marginBottom: 20,
   },
   metadataField: {
     flex: 1,
+  },
+  difficultyButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  difficultyButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  difficultyButtonActive: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  difficultyButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#666',
+  },
+  difficultyButtonTextActive: {
+    color: '#fff',
   },
   footer: {
     padding: 20,
@@ -516,4 +585,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default ManualEntryScreen;
+export default RecipeEditScreen;

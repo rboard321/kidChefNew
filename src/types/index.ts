@@ -19,7 +19,7 @@ export interface ParentProfile {
   termsAcceptedAt?: FirestoreDate;
   privacyPolicyAcceptedAt?: FirestoreDate;
   coppaDisclosureAccepted?: boolean;
-  consentStatus?: 'pending' | 'verified' | 'rejected' | 'expired';
+  coppaConsentDate?: FirestoreDate;
   createdAt: FirestoreDate;
   updatedAt: FirestoreDate;
 }
@@ -105,8 +105,8 @@ export interface RecipeRecommendation {
 // Enhanced Recipe Types
 export interface Recipe {
   id: string;
-  userId: string; // Legacy field for backward compatibility
-  parentId?: string; // New field linking to ParentProfile
+  userId?: string; // Legacy field - deprecated, will be removed
+  parentId: string; // Required - links to ParentProfile
   title: string;
   description?: string;
   url?: string;
@@ -193,6 +193,10 @@ export interface KidRecipe {
   conversionCount?: number; // Track how many times converted
   lastConvertedAt?: FirestoreDate; // When last converted
   isActive?: boolean; // If false, kid can reconvert
+  approvalStatus: 'pending' | 'approved' | 'rejected'; // Parent approval status
+  approvalRequestedAt?: FirestoreDate; // When conversion completed and requested approval
+  approvalReviewedAt?: FirestoreDate; // When parent approved/rejected
+  approvalNotes?: string; // Optional notes from parent
   createdAt: FirestoreDate;
 }
 
@@ -299,14 +303,20 @@ export type RootStackParamList = {
   ParentSettings: { kidData?: { name: string; age: number; readingLevel: 'beginner' | 'intermediate' | 'advanced' } };
   Main: undefined;
   RecipeDetail: { recipeId: string };
-  RecipeView: { recipeId: string; kidId?: string };
+  RecipeEdit: { recipeId: string };
+  RecipeView: { recipeId?: string; kidRecipeId?: string; kidId?: string };
   KidRecipeDetail: { kidRecipeId: string };
   KidRecipeView: { recipeId: string; kidId: string };
   CookingMode: { kidRecipeId: string; kidId?: string };
   KidSelector: undefined;
   KidManagement: undefined;
+  KidProfileDetail: { kid: KidProfile };
+  RecipeManagement: undefined;
+  Favorites: undefined;
+  BadgeCollection: undefined;
   FamilyMeals: undefined;
   CookingHistory: { kidId?: string };
+  KidRecipePreview: { kidRecipeId: string };
 };
 
 export type AppMode = 'parent' | 'kid';

@@ -7,11 +7,16 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Image } from 'expo-image';
 import { recipeService } from '../../services/recipes';
+import { recipeSharingService } from '../../services/recipeSharing';
+import { kidRecipeManagerService } from '../../services/kidRecipeManager';
+import { useAuth } from '../../contexts/AuthContext';
+import RecipeSourceLink from '../../components/RecipeSourceLink';
 import type { Ingredient, Recipe } from '../../types';
 
 type RouteParams = { recipeId: string };
@@ -19,9 +24,15 @@ type RouteParams = { recipeId: string };
 export default function RecipeDetailScreen() {
   const route = useRoute();
   const { recipeId } = (route.params || {}) as RouteParams;
+  const navigation = useNavigation();
+  const { kidProfiles, parentProfile } = useAuth();
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(true);
   const [servings, setServings] = useState(1);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [selectedKidIds, setSelectedKidIds] = useState<string[]>([]);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -35,7 +46,7 @@ export default function RecipeDetailScreen() {
         const fetched = await recipeService.getRecipe(recipeId);
         if (isMounted) {
           setRecipe(fetched);
-          setServings(fetched?.servings || 1);
+          setServings(1);
         }
       } catch (error) {
         console.error('Failed to load recipe:', error);
@@ -63,23 +74,99 @@ export default function RecipeDetailScreen() {
     return ingredient;
   };
 
-  const handleConvertToKidFriendly = () => {
-    Alert.alert(
-      'Convert to Kid-Friendly',
-      'This will create a simplified version of this recipe for kids to follow. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Convert', onPress: () => console.log('Converting recipe...') },
-      ]
+  const handleShareWithKids = () => {
+    if (!parentProfile?.id) {
+      Alert.alert('Unable to Share', 'Please sign in again to share recipes.');
+      return;
+    }
+    if (!kidProfiles.length) {
+      Alert.alert('No Kids Yet', 'Create a kid profile to share recipes.');
+      return;
+    }
+    setSelectedKidIds([]);
+    setShareModalVisible(true);
+  };
+
+  const toggleKidSelection = (kidId: string) => {
+    setSelectedKidIds((prev) =>
+      prev.includes(kidId) ? prev.filter((id) => id !== kidId) : [...prev, kidId]
     );
   };
 
-  const handleShare = () => {
-    console.log('Sharing recipe...');
+  const handleShareAllKids = async () => {
+    if (!recipeId || !parentProfile?.id || !recipe) return;
+    try {
+      setShareSaving(true);
+
+      // Step 1: Create sharedRecipes entries (fast, keep awaiting)
+      await recipeSharingService.shareRecipeWithAllKids(recipeId, parentProfile.id);
+
+      // Step 2: Trigger conversions WITHOUT awaiting (non-blocking)
+      kidProfiles.forEach((kid) => {
+        kidRecipeManagerService.convertAndSaveRecipe(
+          recipe, kid.id, kid.readingLevel, kid.age
+        ).catch(error => {
+          console.error(`Conversion failed for kid ${kid.id}:`, error);
+        });
+      });
+
+      // Step 3: Close modal immediately and show success message
+      setShareModalVisible(false);
+      setShareSaving(false);
+      Alert.alert(
+        'Recipe Shared! 🎉',
+        'Your recipe is being converted for your kids. You\'ll see it in "Pending Approvals" when ready.',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Failed to share recipe with all kids:', error);
+      Alert.alert('Share Failed', 'Unable to share recipe. Please try again.');
+      setShareSaving(false);
+    }
+  };
+
+  const handleShareSelectedKids = async () => {
+    if (!recipeId || !parentProfile?.id || !selectedKidIds.length || !recipe) return;
+    try {
+      setShareSaving(true);
+
+      // Step 1: Create sharedRecipes entries (fast, keep awaiting)
+      await Promise.all(
+        selectedKidIds.map((kidId) =>
+          recipeSharingService.shareRecipeWithKid(recipeId, kidId, parentProfile.id)
+        )
+      );
+
+      // Step 2: Trigger conversions WITHOUT awaiting (non-blocking)
+      selectedKidIds.forEach((kidId) => {
+        const kid = kidProfiles.find((profile) => profile.id === kidId);
+        if (kid) {
+          kidRecipeManagerService.convertAndSaveRecipe(
+            recipe, kid.id, kid.readingLevel, kid.age
+          ).catch(error => {
+            console.error(`Conversion failed for kid ${kidId}:`, error);
+          });
+        }
+      });
+
+      // Step 3: Close modal immediately and show success message
+      setShareModalVisible(false);
+      setShareSaving(false);
+      Alert.alert(
+        'Recipe Shared! 🎉',
+        'Your recipe is being converted for your kids. You\'ll see it in "Pending Approvals" when ready.',
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Failed to share recipe with selected kids:', error);
+      Alert.alert('Share Failed', 'Unable to share recipe. Please try again.');
+      setShareSaving(false);
+    }
   };
 
   const handleEdit = () => {
-    console.log('Edit recipe...');
+    if (!recipeId) return;
+    navigation.navigate('RecipeEdit' as never, { recipeId } as never);
   };
 
   const handleDelete = () => {
@@ -88,7 +175,22 @@ export default function RecipeDetailScreen() {
       'Are you sure you want to delete this recipe? This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => console.log('Deleting recipe...') },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            if (!recipeId) return;
+            try {
+              setDeleting(true);
+              await recipeService.deleteRecipe(recipeId);
+              navigation.goBack();
+            } catch (error) {
+              console.error('Failed to delete recipe:', error);
+              Alert.alert('Delete Failed', 'Unable to delete this recipe right now.');
+              setDeleting(false);
+            }
+          }
+        },
       ]
     );
   };
@@ -107,14 +209,14 @@ export default function RecipeDetailScreen() {
     return [];
   }, [recipe?.instructions, recipe?.steps]);
 
-  const scale = recipe?.servings ? servings / recipe.servings : 1;
+  const scale = servings;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {loading ? (
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+      {loading || deleting ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3b82f6" />
-          <Text style={styles.loadingText}>Loading recipe...</Text>
+          <Text style={styles.loadingText}>{deleting ? 'Deleting recipe...' : 'Loading recipe...'}</Text>
         </View>
       ) : !recipe ? (
         <View style={styles.loadingContainer}>
@@ -161,9 +263,12 @@ export default function RecipeDetailScreen() {
             </View>
           </View>
 
+          {/* Original Recipe Link */}
+          <RecipeSourceLink recipe={recipe} />
+
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Servings</Text>
+              <Text style={styles.sectionTitle}>Scale</Text>
               <View style={styles.servingAdjuster}>
                 <TouchableOpacity
                   style={styles.adjustButton}
@@ -171,7 +276,7 @@ export default function RecipeDetailScreen() {
                 >
                   <Text style={styles.adjustButtonText}>-</Text>
                 </TouchableOpacity>
-                <Text style={styles.servingsText}>{servings}</Text>
+                <Text style={styles.servingsText}>x{servings}</Text>
                 <TouchableOpacity
                   style={styles.adjustButton}
                   onPress={() => setServings(servings + 1)}
@@ -206,14 +311,11 @@ export default function RecipeDetailScreen() {
           </View>
 
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.primaryButton} onPress={handleConvertToKidFriendly}>
-              <Text style={styles.primaryButtonText}>✨ Make Kid-Friendly</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={handleShareWithKids}>
+              <Text style={styles.primaryButtonText}>👨‍👩‍👧‍👦 Share with Kids</Text>
             </TouchableOpacity>
 
             <View style={styles.secondaryActions}>
-              <TouchableOpacity style={styles.secondaryButton} onPress={handleShare}>
-                <Text style={styles.secondaryButtonText}>📤 Share</Text>
-              </TouchableOpacity>
               <TouchableOpacity style={styles.secondaryButton} onPress={handleEdit}>
                 <Text style={styles.secondaryButtonText}>✏️ Edit</Text>
               </TouchableOpacity>
@@ -222,6 +324,69 @@ export default function RecipeDetailScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          <Modal
+            visible={shareModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShareModalVisible(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Share with Kids</Text>
+                <TouchableOpacity
+                  style={styles.modalPrimaryButton}
+                  onPress={handleShareAllKids}
+                  disabled={shareSaving}
+                >
+                  <Text style={styles.modalPrimaryButtonText}>Share with All</Text>
+                </TouchableOpacity>
+                {shareSaving ? (
+                  <View style={styles.shareStatus}>
+                    <ActivityIndicator size="small" color="#2563eb" />
+                    <Text style={styles.shareStatusText}>Sharing with kids...</Text>
+                  </View>
+                ) : null}
+                <Text style={styles.modalSubTitle}>Or select kids</Text>
+                <ScrollView style={styles.kidList}>
+                  {kidProfiles.map((kid) => {
+                    const selected = selectedKidIds.includes(kid.id);
+                    return (
+                      <TouchableOpacity
+                        key={kid.id}
+                        style={styles.kidRow}
+                        onPress={() => toggleKidSelection(kid.id)}
+                        disabled={shareSaving}
+                      >
+                        <View style={[styles.checkCircle, selected && styles.checkCircleSelected]}>
+                          {selected ? <Text style={styles.checkMark}>✓</Text> : null}
+                        </View>
+                        <Text style={styles.kidName}>{kid.name}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.modalSecondaryButton}
+                    onPress={() => setShareModalVisible(false)}
+                    disabled={shareSaving}
+                  >
+                    <Text style={styles.modalSecondaryButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalPrimaryButton,
+                      !selectedKidIds.length && styles.modalPrimaryButtonDisabled,
+                    ]}
+                    onPress={handleShareSelectedKids}
+                    disabled={shareSaving || !selectedKidIds.length}
+                  >
+                    <Text style={styles.modalPrimaryButtonText}>Share Selected</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
         </ScrollView>
       )}
     </SafeAreaView>
@@ -441,5 +606,106 @@ const styles = StyleSheet.create({
   },
   deleteButtonText: {
     color: '#ef4444',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalSubTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  modalPrimaryButton: {
+    backgroundColor: '#2563eb',
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalPrimaryButtonDisabled: {
+    backgroundColor: '#93c5fd',
+  },
+  modalPrimaryButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  kidList: {
+    maxHeight: 220,
+  },
+  kidRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  kidName: {
+    fontSize: 16,
+    color: '#111827',
+  },
+  checkCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#cbd5f5',
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkCircleSelected: {
+    backgroundColor: '#2563eb',
+    borderColor: '#2563eb',
+  },
+  checkMark: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  shareStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
+  shareStatusText: {
+    fontSize: 14,
+    color: '#2563eb',
+    fontWeight: '600',
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+  },
+  modalSecondaryButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
   },
 });

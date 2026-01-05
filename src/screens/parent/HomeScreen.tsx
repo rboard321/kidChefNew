@@ -11,6 +11,8 @@ import {
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import { recipeService } from '../../services/recipes';
 import { useAuth } from '../../contexts/AuthContext';
 import { useImport } from '../../contexts/ImportContext';
@@ -21,7 +23,7 @@ import { SearchBar } from '../../components/SearchBar';
 import { searchRecipes, filterRecipes, SearchFilters } from '../../utils/searchUtils';
 import FilterChips, { FilterOption } from '../../components/FilterChips';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import type { Recipe } from '../../types';
+import type { KidRecipe, Recipe } from '../../types';
 
 export default function ParentHomeScreen() {
   const navigation = useNavigation();
@@ -36,6 +38,7 @@ export default function ParentHomeScreen() {
     visible: false,
     message: '',
   });
+  const [pendingRecipes, setPendingRecipes] = useState<KidRecipe[]>([]);
 
   useEffect(() => {
     loadRecipes();
@@ -87,6 +90,30 @@ export default function ParentHomeScreen() {
     return unsubscribe;
   }, [navigation]);
 
+  useEffect(() => {
+    if (!parentProfile?.id) {
+      setPendingRecipes([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'kidRecipes'),
+      where('parentId', '==', parentProfile.id),
+      where('approvalStatus', '==', 'pending'),
+      orderBy('approvalRequestedAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const pending: KidRecipe[] = [];
+      snapshot.forEach((doc) => {
+        pending.push({ id: doc.id, ...(doc.data() as Omit<KidRecipe, 'id'>) });
+      });
+      setPendingRecipes(pending);
+    });
+
+    return () => unsubscribe();
+  }, [parentProfile?.id]);
+
   // Handle search and filter combination
   useEffect(() => {
     let filtered = recipes;
@@ -137,7 +164,7 @@ export default function ParentHomeScreen() {
 
 
   const loadRecipes = async (isRefresh = false, showNotification = true) => {
-    if (!user?.uid) return;
+    if (!user?.uid || !parentProfile?.id) return;
 
     try {
       if (isRefresh) {
@@ -147,7 +174,7 @@ export default function ParentHomeScreen() {
       }
 
       const previousRecipeCount = recipes.length;
-      const userRecipes = await recipeService.getUserRecipes(user.uid, parentProfile?.id, isRefresh);
+      const userRecipes = await recipeService.getUserRecipes(parentProfile.id, isRefresh);
 
       // Check if new recipes were added during a refresh (not initial load)
       if (isRefresh && showNotification && userRecipes.length > previousRecipeCount) {
@@ -272,14 +299,6 @@ export default function ParentHomeScreen() {
           </TouchableOpacity>
           {kidProfiles.length > 0 && (
             <TouchableOpacity
-              style={styles.manageRecipesButton}
-              onPress={() => navigation.navigate('RecipeManagement' as never)}
-            >
-              <Text style={styles.manageRecipesButtonText}>🗑️ Manage</Text>
-            </TouchableOpacity>
-          )}
-          {kidProfiles.length > 0 && (
-            <TouchableOpacity
               style={styles.kidModeButton}
               onPress={() => setDeviceMode('kid')}
             >
@@ -288,6 +307,26 @@ export default function ParentHomeScreen() {
           )}
         </View>
       </View>
+
+      {pendingRecipes.length > 0 && (
+        <TouchableOpacity
+          style={styles.pendingBanner}
+          onPress={() =>
+            navigation.navigate('KidRecipePreview' as never, { kidRecipeId: pendingRecipes[0].id } as never)
+          }
+        >
+          <View style={styles.pendingBannerContent}>
+            <Text style={styles.pendingBannerIcon}>🔔</Text>
+            <View style={styles.pendingBannerText}>
+              <Text style={styles.pendingBannerTitle}>
+                {pendingRecipes.length} Recipe{pendingRecipes.length > 1 ? 's' : ''} Ready for Review
+              </Text>
+              <Text style={styles.pendingBannerSubtitle}>Tap to preview and approve</Text>
+            </View>
+            <Text style={styles.pendingBannerChevron}>›</Text>
+          </View>
+        </TouchableOpacity>
+      )}
 
       {!loading && recipes.length > 0 && (
         <View>
@@ -384,6 +423,41 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
   },
+  pendingBanner: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: '#eef2ff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    padding: 12,
+  },
+  pendingBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pendingBannerIcon: {
+    fontSize: 22,
+    marginRight: 10,
+  },
+  pendingBannerText: {
+    flex: 1,
+  },
+  pendingBannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e3a8a',
+  },
+  pendingBannerSubtitle: {
+    fontSize: 12,
+    color: '#4f46e5',
+    marginTop: 2,
+  },
+  pendingBannerChevron: {
+    fontSize: 22,
+    color: '#4f46e5',
+    marginLeft: 8,
+  },
   favoritesButton: {
     backgroundColor: '#ef4444',
     paddingHorizontal: 12,
@@ -406,25 +480,6 @@ const styles = StyleSheet.create({
   searchContainer: {
     paddingHorizontal: 20,
     paddingBottom: 10,
-  },
-  manageRecipesButton: {
-    backgroundColor: '#dc2626',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  manageRecipesButtonText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '600',
   },
   kidModeButton: {
     backgroundColor: '#10b981',

@@ -374,6 +374,13 @@ async function extractRecipeWithDetails(url: string): Promise<{ recipe?: Partial
       if (!result.recipe.image) {
         result.recipe.image = extractImageFromMetaTags($);
       }
+      if (result.recipe) {
+        const meta = extractJsonLdRecipeMeta($);
+        result.recipe.servings = result.recipe.servings ?? meta.servings;
+        result.recipe.prepTime = result.recipe.prepTime ?? meta.prepTime;
+        result.recipe.cookTime = result.recipe.cookTime ?? meta.cookTime;
+        result.recipe.totalTime = result.recipe.totalTime ?? meta.totalTime;
+      }
 
       try {
         // Only validate if we have essential fields
@@ -476,6 +483,13 @@ async function extractRecipeWithDetailsFromHtml(url: string, html: string): Prom
       if (!result.recipe.image) {
         result.recipe.image = extractImageFromMetaTags($);
       }
+      if (result.recipe) {
+        const meta = extractJsonLdRecipeMeta($);
+        result.recipe.servings = result.recipe.servings ?? meta.servings;
+        result.recipe.prepTime = result.recipe.prepTime ?? meta.prepTime;
+        result.recipe.cookTime = result.recipe.cookTime ?? meta.cookTime;
+        result.recipe.totalTime = result.recipe.totalTime ?? meta.totalTime;
+      }
 
       try {
         if (result.recipe.title && result.recipe.ingredients && result.recipe.instructions) {
@@ -573,6 +587,13 @@ async function extractRecipeFromHtml(url: string, html: string): Promise<Scraped
     if (result.recipe && result.confidence > 0.3) {
       if (!result.recipe.image) {
         result.recipe.image = extractImageFromMetaTags($);
+      }
+      if (result.recipe) {
+        const meta = extractJsonLdRecipeMeta($);
+        result.recipe.servings = result.recipe.servings ?? meta.servings;
+        result.recipe.prepTime = result.recipe.prepTime ?? meta.prepTime;
+        result.recipe.cookTime = result.recipe.cookTime ?? meta.cookTime;
+        result.recipe.totalTime = result.recipe.totalTime ?? meta.totalTime;
       }
 
       try {
@@ -712,6 +733,13 @@ async function extractRecipeFromUrl(url: string): Promise<ScrapedRecipe> {
       // Add meta tag image fallback if no image found
       if (!result.recipe.image) {
         result.recipe.image = extractImageFromMetaTags($);
+      }
+      if (result.recipe) {
+        const meta = extractJsonLdRecipeMeta($);
+        result.recipe.servings = result.recipe.servings ?? meta.servings;
+        result.recipe.prepTime = result.recipe.prepTime ?? meta.prepTime;
+        result.recipe.cookTime = result.recipe.cookTime ?? meta.cookTime;
+        result.recipe.totalTime = result.recipe.totalTime ?? meta.totalTime;
       }
 
       try {
@@ -958,6 +986,488 @@ function extractImageFromMetaTags($: cheerio.CheerioAPI): string | undefined {
     }
   }
 
+  return undefined;
+}
+
+function extractJsonLdRecipeMeta($: cheerio.CheerioAPI): {
+  servings?: number;
+  prepTime?: string;
+  cookTime?: string;
+  totalTime?: string;
+} {
+  const jsonLdScripts = $('script[type="application/ld+json"]');
+
+  const extractText = (value: any): string => {
+    if (typeof value === 'string') return value;
+    if (value && value.text) return value.text;
+    if (value && value['@value']) return value['@value'];
+    return '';
+  };
+
+  const extractNumber = (value: any): number | undefined => {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const str = value.toString().trim();
+      const numberMatch = str.match(/(\d+(?:\.\d+)?)/);
+      if (numberMatch) {
+        const num = parseFloat(numberMatch[1]);
+        return !isNaN(num) ? num : undefined;
+      }
+    }
+    return undefined;
+  };
+
+  const extractTime = (duration: any): string => {
+    if (!duration) return '';
+    if (typeof duration === 'string') {
+      const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
+      if (match) {
+        const hours = match[1] ? parseInt(match[1]) : 0;
+        const minutes = match[2] ? parseInt(match[2]) : 0;
+        if (hours && minutes) return `${hours}h ${minutes}min`;
+        if (hours) return `${hours}h`;
+        if (minutes) return `${minutes}min`;
+      }
+    }
+    return extractText(duration);
+  };
+
+  const findRecipe = (data: any): any | undefined => {
+    if (!data) return undefined;
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        const found = findRecipe(item);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (data['@type'] === 'Recipe') return data;
+    if (Array.isArray(data['@type']) && data['@type'].includes('Recipe')) return data;
+    if (data['@graph']) return findRecipe(data['@graph']);
+    return undefined;
+  };
+
+  for (let i = 0; i < jsonLdScripts.length; i++) {
+    const scriptContent = $(jsonLdScripts[i]).html();
+    if (!scriptContent) continue;
+    try {
+      const data = JSON.parse(scriptContent);
+      const recipe = findRecipe(data);
+      if (recipe) {
+        return {
+          servings: extractNumber(recipe.recipeYield || recipe.yield),
+          prepTime: extractTime(recipe.prepTime),
+          cookTime: extractTime(recipe.cookTime),
+          totalTime: extractTime(recipe.totalTime)
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return {};
+}
+
+function resolveAbsoluteUrl(baseUrl: string, imageUrl: string): string | undefined {
+  try {
+    if (!imageUrl) return undefined;
+    if (imageUrl.startsWith('//')) {
+      return `https:${imageUrl}`;
+    }
+    return new URL(imageUrl, baseUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function isLikelyBadImageUrl(imageUrl: string): boolean {
+  const lowered = imageUrl.toLowerCase();
+
+  // Reject SVG and ICO files
+  if (lowered.endsWith('.svg') || lowered.endsWith('.ico')) return true;
+
+  // Use word-boundary matching for bad tokens to avoid false positives
+  // (e.g., don't reject "Pad-Thai" because it contains "ad")
+  const badTokens = ['logo', 'icon', 'sprite', 'avatar', 'ad', 'banner', 'placeholder', 'pixel', 'spacer'];
+
+  for (const token of badTokens) {
+    // Match token as whole word with word boundaries
+    const regex = new RegExp(`\\b${token}\\b`, 'i');
+    if (regex.test(lowered)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function extractImageFromJsonLd($: cheerio.CheerioAPI, baseUrl: string): string | undefined {
+  const jsonLdScripts = $('script[type="application/ld+json"]');
+  const normalizeImageEntry = (value: any): { url?: string; width?: number; height?: number } => {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      return { url: resolveAbsoluteUrl(baseUrl, value) };
+    }
+    if (typeof value === 'object') {
+      const rawUrl = value.url || value['@id'] || value.contentUrl;
+      const width = typeof value.width === 'number' ? value.width : parseInt(value.width || '', 10);
+      const height = typeof value.height === 'number' ? value.height : parseInt(value.height || '', 10);
+      return { url: typeof rawUrl === 'string' ? resolveAbsoluteUrl(baseUrl, rawUrl) : undefined, width, height };
+    }
+    return {};
+  };
+  const pickBestImage = (value: any): string | undefined => {
+    if (!value) return undefined;
+    const entries = Array.isArray(value) ? value.map(normalizeImageEntry) : [normalizeImageEntry(value)];
+    const filtered = entries.filter((entry) => {
+      if (!entry.url || isLikelyBadImageUrl(entry.url)) return false;
+      if (Number.isFinite(entry.width) && entry.width! < 400) return false;
+      return true;
+    });
+    if (filtered.length === 0) return undefined;
+    const scored = filtered
+      .map((entry) => ({
+        ...entry,
+        score: Number.isFinite(entry.width) ? entry.width! : Number.isFinite(entry.height) ? entry.height! : 0
+      }))
+      .sort((a, b) => b.score - a.score);
+    return scored[0].url;
+  };
+
+  const findRecipeNode = (data: any): any | undefined => {
+    if (!data) return undefined;
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        const found = findRecipeNode(item);
+        if (found) return found;
+      }
+      return undefined;
+    }
+    if (data['@type'] === 'Recipe') return data;
+    if (data['@graph']) return findRecipeNode(data['@graph']);
+    return undefined;
+  };
+
+  for (let i = 0; i < jsonLdScripts.length; i++) {
+    const scriptContent = $(jsonLdScripts[i]).html();
+    if (!scriptContent) continue;
+    try {
+      const data = JSON.parse(scriptContent);
+      const recipeNode = findRecipeNode(data);
+
+      if (recipeNode) {
+        // Primary location: recipe.image
+        let candidate = pickBestImage(recipeNode.image);
+        if (candidate) return candidate;
+
+        // Alternative: AggregateRating.image (rated recipes)
+        if (recipeNode.aggregateRating?.image) {
+          candidate = pickBestImage(recipeNode.aggregateRating.image);
+          if (candidate) return candidate;
+        }
+      }
+
+      // Alternative: root-level image property (some schemas use this)
+      if (data.image) {
+        const candidate = pickBestImage(data.image);
+        if (candidate) return candidate;
+      }
+
+      // Alternative: mainEntity.image (nested recipe schemas)
+      if (data.mainEntity?.image) {
+        const candidate = pickBestImage(data.mainEntity.image);
+        if (candidate) return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function extractImageFromOpenGraph($: cheerio.CheerioAPI, baseUrl: string): string | undefined {
+  const content = $('meta[property="og:image"], meta[property="og:image:url"]').first().attr('content');
+  return content ? resolveAbsoluteUrl(baseUrl, content) : undefined;
+}
+
+function extractImageFromTwitter($: cheerio.CheerioAPI, baseUrl: string): string | undefined {
+  const content = $('meta[name="twitter:image"], meta[name="twitter:image:src"]').first().attr('content');
+  return content ? resolveAbsoluteUrl(baseUrl, content) : undefined;
+}
+
+function extractImageCandidatesFromImgTags($: cheerio.CheerioAPI, baseUrl: string): string[] {
+  const candidates: Array<{ url: string; score: number }> = [];
+  $('img').each((_, el) => {
+    const $el = $(el);
+
+    // Check all common lazy-loading patterns
+    const lazyAttributes = [
+      'src',                  // Standard attribute
+      'data-src',            // Most common lazy pattern
+      'data-lazy-src',       // WordPress and others
+      'data-original',       // LazyLoad plugin
+      'data-lazy',           // Custom implementations
+      'data-real-src',       // Some frameworks
+      'data-enlarge-src',    // Lightbox plugins
+      'data-srcset',         // Responsive lazy loading
+    ];
+
+    let rawUrl: string | undefined;
+    for (const attr of lazyAttributes) {
+      const value = $el.attr(attr);
+      if (value && value.trim() && !value.startsWith('data:')) {
+        rawUrl = value.trim();
+        // For srcset, extract first URL
+        if (attr === 'data-srcset') {
+          rawUrl = value.split(',')[0].trim().split(/\s+/)[0];
+        }
+        break;
+      }
+    }
+
+    if (!rawUrl) return;
+    let resolved = resolveAbsoluteUrl(baseUrl, rawUrl);
+    if (!resolved || isLikelyBadImageUrl(resolved)) return;
+
+    // Check if there's a higher-res version in srcset
+    const srcset = $el.attr('srcset');
+    if (srcset) {
+      // Parse srcset: "image-400.jpg 400w, image-800.jpg 800w, image-1200.jpg 1200w"
+      const sources = srcset.split(',').map((s: string) => s.trim());
+      let maxWidth = 0;
+      let bestSource = resolved;
+
+      for (const source of sources) {
+        const parts = source.split(/\s+/);
+        if (parts.length >= 2) {
+          const widthMatch = parts[1].match(/^(\d+)w$/);
+          if (widthMatch) {
+            const width = parseInt(widthMatch[1], 10);
+            if (width > maxWidth) {
+              maxWidth = width;
+              bestSource = parts[0];
+            }
+          }
+        }
+      }
+
+      // Prefer higher-res if available
+      if (maxWidth >= 600) {
+        const higherResResolved = resolveAbsoluteUrl(baseUrl, bestSource);
+        if (higherResResolved && !isLikelyBadImageUrl(higherResResolved)) {
+          resolved = higherResResolved;
+        }
+      }
+    }
+
+    let score = 0;
+    const width = parseInt($el.attr('width') || '', 10);
+    const height = parseInt($el.attr('height') || '', 10);
+    if (!isNaN(width) && width < 300) return;
+    if (!isNaN(width)) {
+      if (width >= 600) score += 3;
+      else if (width >= 400) score += 2;
+    }
+    if (!isNaN(height)) {
+      if (height >= 400) score += 2;
+      else if (height >= 300) score += 1;
+    }
+    if (!isNaN(width) && !isNaN(height) && height > 0) {
+      const ratio = width / height;
+      if (ratio >= 1.2 && ratio <= 2.2) score += 2;
+    }
+
+    const className = `${$el.attr('class') || ''} ${$el.parent().attr('class') || ''}`.toLowerCase();
+    if (className.includes('recipe') || className.includes('hero') || className.includes('featured')) score += 2;
+    if (className.includes('nav') || className.includes('footer') || className.includes('aside')) score -= 4;
+    const inRecipeContainer = $el.closest('article, .recipe, .entry-content, .post-content').length > 0;
+    if (inRecipeContainer) score += 3;
+
+    const lowered = resolved.toLowerCase();
+    if (lowered.includes('recipe') || lowered.includes('hero') || lowered.includes('featured') || lowered.includes('main')) score += 2;
+    if (isLikelyBadImageUrl(lowered)) score -= 5;
+
+    candidates.push({ url: resolved, score });
+  });
+
+  return candidates
+    .sort((a, b) => b.score - a.score)
+    .map((candidate) => candidate.url);
+}
+
+function extractImageFromPictureElements($: cheerio.CheerioAPI, baseUrl: string): string | undefined {
+  const pictureElements = $('picture');
+
+  for (let i = 0; i < pictureElements.length; i++) {
+    const $picture = $(pictureElements[i]);
+
+    // Check source elements first (higher quality options)
+    const sources = $picture.find('source');
+    for (let j = 0; j < sources.length; j++) {
+      const $source = $(sources[j]);
+      const srcset = $source.attr('srcset');
+      if (srcset) {
+        // Extract first URL from srcset (usually highest quality)
+        const firstUrl = srcset.split(',')[0].trim().split(/\s+/)[0];
+        if (firstUrl && !firstUrl.startsWith('data:')) {
+          const resolved = resolveAbsoluteUrl(baseUrl, firstUrl);
+          if (resolved && !isLikelyBadImageUrl(resolved)) {
+            return resolved;
+          }
+        }
+      }
+    }
+
+    // Fallback to img element inside picture
+    const $img = $picture.find('img');
+    if ($img.length > 0) {
+      const src = $img.first().attr('src');
+      if (src && !src.startsWith('data:')) {
+        const resolved = resolveAbsoluteUrl(baseUrl, src);
+        if (resolved && !isLikelyBadImageUrl(resolved)) {
+          return resolved;
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function validateImageUrl(imageUrl: string): Promise<boolean> {
+  if (!imageUrl) {
+    console.log('[validateImageUrl] Empty URL');
+    return false;
+  }
+
+  if (isLikelyBadImageUrl(imageUrl)) {
+    console.log('[validateImageUrl] Rejected as likely bad image:', imageUrl);
+    return false;
+  }
+
+  try {
+    const response = await axios.head(imageUrl, {
+      timeout: 8000,
+      maxRedirects: 3,
+      validateStatus: (status) => status >= 200 && status < 400
+    });
+    const contentType = response.headers['content-type'] || '';
+    const contentLength = parseInt(response.headers['content-length'] || '0', 10);
+
+    if (!contentType.startsWith('image/')) {
+      console.log('[validateImageUrl] Invalid content-type:', { url: imageUrl, contentType });
+      return false;
+    }
+
+    if (contentLength && contentLength < 15 * 1024) {
+      console.log('[validateImageUrl] Image too small:', { url: imageUrl, sizeKB: Math.round(contentLength / 1024) });
+      return false;
+    }
+
+    console.log('[validateImageUrl] ✅ Valid image:', { url: imageUrl, contentType, sizeKB: Math.round(contentLength / 1024) });
+    return true;
+  } catch (error) {
+    console.log('[validateImageUrl] Validation error:', {
+      url: imageUrl,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
+}
+
+async function resolveRecipeImage(url: string, htmlPayload?: string): Promise<string | undefined> {
+  let freshHtml: string | undefined;
+  try {
+    const requestResult = await enhancedRequestService.fetchWithRetry(url, {
+      timeout: 12000,
+      retries: 2,
+      delay: 1500,
+      userAgent: 'chrome'
+    });
+    freshHtml = requestResult.data;
+  } catch (error) {
+    console.warn('Image fetch failed, falling back to client HTML:', {
+      url,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+
+  const html = freshHtml || htmlPayload;
+  if (!html) {
+    console.log('[resolveRecipeImage] No HTML available for image extraction');
+    return undefined;
+  }
+
+  console.log('[resolveRecipeImage] Starting image extraction:', {
+    url,
+    usingFreshHtml: !!freshHtml,
+    usingClientHtml: !freshHtml && !!htmlPayload,
+    htmlLength: html.length
+  });
+
+  const $ = cheerio.load(html);
+
+  // Extract Instagram meta tag
+  const instagramImage = $('meta[property="instagram:image"]').first().attr('content');
+  const resolvedInstagramImage = instagramImage ? resolveAbsoluteUrl(url, instagramImage) : undefined;
+
+  // Extract Pinterest meta tag
+  const pinterestImage = $('meta[name="pinterest:media"]').first().attr('content');
+  const resolvedPinterestImage = pinterestImage ? resolveAbsoluteUrl(url, pinterestImage) : undefined;
+
+  // Extract image_src link tag
+  const imageSrcLink = $('link[rel="image_src"]').first().attr('href');
+  const resolvedImageSrcLink = imageSrcLink ? resolveAbsoluteUrl(url, imageSrcLink) : undefined;
+
+  const jsonLdImage = extractImageFromJsonLd($, url);
+  const ogImage = extractImageFromOpenGraph($, url);
+  const twitterImage = extractImageFromTwitter($, url);
+  const pictureImage = extractImageFromPictureElements($, url);
+  const imgTagCandidates = extractImageCandidatesFromImgTags($, url);
+
+  console.log('[resolveRecipeImage] Extraction results:', {
+    jsonLdImage,
+    ogImage,
+    twitterImage,
+    instagramImage: resolvedInstagramImage,
+    pinterestImage: resolvedPinterestImage,
+    imageSrcLink: resolvedImageSrcLink,
+    pictureImage,
+    imgTagCount: imgTagCandidates.length,
+    firstImgTag: imgTagCandidates[0]
+  });
+
+  const candidates = [
+    jsonLdImage,
+    ogImage,
+    twitterImage,
+    resolvedInstagramImage,
+    resolvedPinterestImage,
+    resolvedImageSrcLink,
+    pictureImage,
+    ...imgTagCandidates
+  ].filter(Boolean) as string[];
+
+  console.log(`[resolveRecipeImage] Found ${candidates.length} image candidates, validating...`);
+
+  const seen = new Set<string>();
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+
+    console.log(`[resolveRecipeImage] Validating candidate ${i + 1}/${candidates.length}:`, candidate);
+
+    if (await validateImageUrl(candidate)) {
+      console.log(`[resolveRecipeImage] ✅ Found valid image (candidate ${i + 1}):`, candidate);
+      return candidate;
+    } else {
+      console.log(`[resolveRecipeImage] ❌ Validation failed for candidate ${i + 1}`);
+    }
+  }
+
+  console.log('[resolveRecipeImage] No valid image found after checking all candidates');
   return undefined;
 }
 
@@ -1759,8 +2269,7 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    // Check rate limits using improved rolling window system
-    await checkRateLimit(decodedToken.uid, 'import');
+    // No rate limit for imports; only AI conversions are limited.
 
     const htmlPayload = typeof html === 'string' && html.trim().length > 0 ? html : undefined;
 
@@ -1780,6 +2289,13 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
       issues = normalized.issues;
       confidence = 1.0;
       method = 'cache';
+
+      if (!recipe.image) {
+        const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+        if (resolvedImage) {
+          recipe.image = resolvedImage;
+        }
+      }
     } else {
       console.log('Recipe not in cache, scraping:', { url, hasHtml: !!htmlPayload });
       const scraperResult = htmlPayload
@@ -1793,6 +2309,11 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
         issues = normalized.issues.concat(scraperResult.issues || []);
         confidence = scraperResult.confidence;
         method = scraperResult.method;
+
+        const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+        if (resolvedImage) {
+          recipe.image = resolvedImage;
+        }
 
         if (status === 'not_recipe') {
           res.status(400).json({
@@ -1829,6 +2350,11 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
         issues = normalized.issues;
         confidence = 0.5;
         method = 'ai-fallback';
+
+        const resolvedImage = await resolveRecipeImage(url, htmlPayload);
+        if (resolvedImage) {
+          recipe.image = resolvedImage;
+        }
 
         if (status === 'not_recipe') {
           res.status(400).json({
@@ -1887,12 +2413,14 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
     }
 
     // Rate limiting errors
-    if (error.message?.includes('rate limit') || error.message?.includes('Daily import limit reached')) {
+    if (error.code === 'resource-exhausted' ||
+        error.message?.includes('rate limit') ||
+        error.message?.includes('Daily import limit reached')) {
       res.status(429).json({
         error: 'Rate limit exceeded',
-        message: error.message,
+        message: error.message || 'Too many requests. Please try again soon.',
         canRetry: false,
-        suggestion: 'Try again tomorrow or upgrade to premium'
+        suggestion: 'Please try again soon.'
       });
       return;
     }
@@ -2111,7 +2639,7 @@ export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res)
   }
 });
 
-// Cloud Function to import recipes securely with rate limiting
+// Cloud Function to import recipes securely
 export const importRecipeSecure = functions.https.onCall(async (data: { url: string }, context) => {
   try {
     console.log('importRecipeSecure called with context:', {
@@ -2136,8 +2664,7 @@ export const importRecipeSecure = functions.https.onCall(async (data: { url: str
       throw new functions.https.HttpsError('invalid-argument', 'Invalid URL format');
     }
 
-    // Check rate limits using improved rolling window system
-    await checkRateLimit(context.auth.uid, 'import');
+    // No rate limit for imports; only AI conversions are limited.
 
     // Check global recipe cache first
     const cachedRecipe = await getRecipeFromCache(url);
@@ -3138,7 +3665,11 @@ async function createKidRecipeFromCache(recipeId: string, kidAge: number, readin
     estimatedDuration: cached.estimatedDuration,
     skillsRequired: cached.skillsRequired,
     conversionCount: 1,
-    isActive: true,
+    approvalStatus: 'pending',
+    approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    approvalReviewedAt: null,
+    approvalNotes: null,
+    isActive: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
     // Allergy information (if available)
@@ -3226,7 +3757,7 @@ Return the response as JSON in this exact format:
 
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
@@ -3237,6 +3768,7 @@ Return the response as JSON in this exact format:
           content: prompt
         }
       ],
+      response_format: { type: 'json_object' },
       temperature: 0.3,
       max_tokens: 4000,
     });
@@ -3309,7 +3841,11 @@ async function createKidRecipe(recipeId: string, kidAge: number, readingLevel: s
     estimatedDuration: conversion.estimatedDuration,
     skillsRequired: conversion.skillsRequired,
     conversionCount: 1,
-    isActive: true,
+    approvalStatus: 'pending',
+    approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    approvalReviewedAt: null,
+    approvalNotes: null,
+    isActive: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
     // Allergy information (if provided)

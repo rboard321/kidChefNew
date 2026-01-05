@@ -71,11 +71,10 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Save the completed recipe
       const recipeWithIds = {
         ...finalRecipe,
-        userId: user.uid,
         parentId: parentProfile.id
       };
 
-      const recipeId = await recipeService.addRecipe(user.uid, recipeWithIds, parentProfile.id);
+      const recipeId = await recipeService.addRecipe(recipeWithIds, parentProfile.id);
       const savedRecipe = { ...recipeWithIds, id: recipeId, createdAt: new Date(), updatedAt: new Date() };
 
       updateImportJob(jobId, {
@@ -85,7 +84,6 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       });
 
       // Clear cache for UI refresh
-      cacheService.invalidateRecipes(user.uid);
       cacheService.invalidateRecipes(parentProfile.id);
 
       // Emit completion event
@@ -180,10 +178,9 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           try {
             const recipeWithIds = {
               ...result.recipe,
-              userId: user.uid,
-              parentId: parentProfile.id // REQUIRED - no longer optional
+              parentId: parentProfile.id // REQUIRED
             };
-            const recipeId = await recipeService.addRecipe(user.uid, recipeWithIds, parentProfile.id);
+            const recipeId = await recipeService.addRecipe(recipeWithIds, parentProfile.id);
             const savedRecipe = { ...recipeWithIds, id: recipeId, createdAt: new Date(), updatedAt: new Date() };
 
             updateImportJob(jobId, {
@@ -192,12 +189,8 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               result: savedRecipe
             });
 
-            // Additional cache invalidation to ensure UI refreshes after import
-            // Clear cache for both userId (legacy) and parentId (new system)
-            cacheService.invalidateRecipes(user.uid);
-            if (parentProfile?.id) {
-              cacheService.invalidateRecipes(parentProfile.id);
-            }
+            // Clear cache to ensure UI refreshes after import
+            cacheService.invalidateRecipes(parentProfile.id);
 
             // Emit completion event
             importProgressService.emitComplete(jobId, url, savedRecipe);

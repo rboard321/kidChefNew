@@ -3,6 +3,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   User,
   sendEmailVerification as firebaseSendEmailVerification,
   reload
@@ -16,6 +17,7 @@ export interface AuthService {
   signIn: (email: string, password: string) => Promise<User>;
   signOut: () => Promise<void>;
   onAuthStateChanged: (callback: (user: User | null) => void) => () => void;
+  onIdTokenChanged: (callback: (user: User | null) => void) => () => void;
   sendEmailVerification: (user: User) => Promise<void>;
   checkEmailVerification: (user: User) => Promise<boolean>;
 }
@@ -58,6 +60,10 @@ export const authService: AuthService = {
 
   onAuthStateChanged(callback: (user: User | null) => void) {
     return onAuthStateChanged(auth, callback);
+  },
+
+  onIdTokenChanged(callback: (user: User | null) => void) {
+    return onIdTokenChanged(auth, callback);
   },
 
 

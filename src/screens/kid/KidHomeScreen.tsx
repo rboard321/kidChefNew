@@ -13,7 +13,8 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
-import { recipeSharingService } from '../../services/recipeSharing';
+import { kidRecipeManagerService } from '../../services/kidRecipeManager';
+import { recipeService } from '../../services/recipes';
 import { kidProgressService, AVAILABLE_BADGES } from '../../services/kidProgressService';
 import { recipeRecommendationsService } from '../../services/recipeRecommendations';
 import PinInput from '../../components/PinInput';
@@ -78,10 +79,33 @@ export default function KidHomeScreen() {
 
     try {
       setLoading(true);
-      // Load recipes shared with this kid
-      const shared = await recipeSharingService.getSharedRecipesForKid(currentKid.id);
-      setSharedRecipes(shared);
-      setFilteredRecipes(shared);
+
+      // Load kid recipes directly - these are the converted, kid-friendly versions
+      const kidRecipes = await kidRecipeManagerService.getKidRecipes(currentKid.id);
+
+      console.log(`📚 Loaded ${kidRecipes.length} recipes for kid: ${currentKid.name}`);
+
+      if (kidRecipes.length > 0) {
+        // Fetch original recipe titles/images for display
+        const recipesWithDetails = await Promise.all(
+          kidRecipes.map(async (kidRecipe) => {
+            const originalRecipe = await recipeService.getRecipe(kidRecipe.originalRecipeId);
+            return {
+              ...kidRecipe,
+              title: originalRecipe?.title || 'Untitled Recipe',
+              imageUrl: originalRecipe?.imageUrl,
+              sourceUrl: originalRecipe?.sourceUrl,
+            };
+          })
+        );
+
+        setSharedRecipes(recipesWithDetails as any);
+        setFilteredRecipes(recipesWithDetails as any);
+      } else {
+        console.log('ℹ️ No recipes found for this kid');
+        setSharedRecipes([]);
+        setFilteredRecipes([]);
+      }
 
       // Load kid progress
       const kidProgress = await kidProgressService.getProgress(currentKid.id);
@@ -96,7 +120,8 @@ export default function KidHomeScreen() {
       // Load recommendations in background
       loadRecommendations();
     } catch (error) {
-      console.error('Error loading kid recipes:', error);
+      console.error('❌ Error loading kid recipes:', error);
+      Alert.alert('Error', 'Failed to load recipes. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -162,9 +187,10 @@ export default function KidHomeScreen() {
     );
   };
 
-  const handleRecipePress = (recipe: Recipe) => {
+  const handleRecipePress = (recipe: any) => {
     if (!currentKid) return;
-    navigation.navigate('RecipeView' as never, { recipeId: recipe.id, kidId: currentKid.id } as never);
+    // Pass kidRecipeId since we're in kid mode and recipe.id is the kid recipe ID
+    navigation.navigate('RecipeView' as never, { kidRecipeId: recipe.id, kidId: currentKid.id } as never);
   };
 
   const handleExitKidMode = () => {

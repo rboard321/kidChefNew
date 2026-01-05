@@ -8,7 +8,6 @@ import {
   getDoc,
   query,
   where,
-  or,
   orderBy,
   Timestamp
 } from 'firebase/firestore';
@@ -17,33 +16,30 @@ import { cacheService } from './cacheService';
 import type { Recipe, KidRecipe } from '../types';
 
 export interface RecipeService {
-  addRecipe: (userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) => Promise<string>;
+  addRecipe: (recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) => Promise<string>;
   updateRecipe: (recipeId: string, updates: Partial<Recipe>) => Promise<void>;
   deleteRecipe: (recipeId: string) => Promise<void>;
-  getUserRecipes: (userId: string) => Promise<Recipe[]>;
+  getUserRecipes: (parentId: string) => Promise<Recipe[]>;
   getRecipe: (recipeId: string) => Promise<Recipe | null>;
   createKidFriendlyVersion: (recipeId: string, kidRecipe: Omit<KidRecipe, 'id' | 'createdAt'>) => Promise<string>;
   getKidRecipe: (kidRecipeId: string) => Promise<KidRecipe | null>;
 }
 
 export const recipeService: RecipeService = {
-  async addRecipe(userId: string, recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) {
+  async addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) {
     try {
       const now = Timestamp.now();
       const recipeData: Omit<Recipe, 'id'> = {
         ...recipe,
-        userId, // Keep for backward compatibility
-        parentId, // REQUIRED - always set for proper access control
+        parentId, // REQUIRED - links to ParentProfile
         createdAt: now,
         updatedAt: now,
       };
 
       const docRef = await addDoc(collection(db, 'recipes'), recipeData);
 
-      // Invalidate user's recipe list cache since we added a new recipe
-      // Clear both legacy userId cache and new parentId cache
-      cacheService.invalidateRecipes(userId);
-      cacheService.invalidateRecipes(parentId); // Always clear since parentId is now required
+      // Invalidate parent's recipe list cache
+      cacheService.invalidateRecipes(parentId);
 
       return docRef.id;
     } catch (error) {
@@ -61,10 +57,10 @@ export const recipeService: RecipeService = {
 
       await updateDoc(doc(db, 'recipes', recipeId), updateData);
 
-      // Invalidate both the recipe detail and the user's recipe list cache
+      // Invalidate both the recipe detail and the parent's recipe list cache
       cacheService.invalidateRecipeDetail(recipeId);
-      if (updates.userId) {
-        cacheService.invalidateRecipes(updates.userId);
+      if (updates.parentId) {
+        cacheService.invalidateRecipes(updates.parentId);
       }
     } catch (error) {
       console.error('Error updating recipe:', error);
@@ -74,15 +70,15 @@ export const recipeService: RecipeService = {
 
   async deleteRecipe(recipeId: string) {
     try {
-      // First get the recipe to find the userId for cache invalidation
+      // First get the recipe to find the parentId for cache invalidation
       const recipeToDelete = await this.getRecipe(recipeId);
 
       await deleteDoc(doc(db, 'recipes', recipeId));
 
-      // Invalidate both the recipe detail cache and the user's recipe list cache
+      // Invalidate both the recipe detail cache and the parent's recipe list cache
       cacheService.invalidateRecipeDetail(recipeId);
-      if (recipeToDelete?.userId) {
-        cacheService.invalidateRecipes(recipeToDelete.userId);
+      if (recipeToDelete?.parentId) {
+        cacheService.invalidateRecipes(recipeToDelete.parentId);
       }
     } catch (error) {
       console.error('Error deleting recipe:', error);
@@ -90,46 +86,28 @@ export const recipeService: RecipeService = {
     }
   },
 
-  async getUserRecipes(userId: string, parentId?: string, skipCache: boolean = false): Promise<Recipe[]> {
+  async getUserRecipes(parentId: string, skipCache: boolean = false): Promise<Recipe[]> {
     try {
-      const cacheKey = parentId || userId;
-
       // Check cache first (unless explicitly skipping cache for refresh)
       if (!skipCache) {
-        const cached = cacheService.getRecipes(cacheKey);
+        const cached = cacheService.getRecipes(parentId);
         if (cached) {
           if (__DEV__) {
-            console.log('Returning cached recipes for:', { userId, parentId });
+            console.log('Returning cached recipes for parentId:', parentId);
           }
           return cached;
         }
       }
 
       if (__DEV__) {
-        console.log(skipCache ? 'Skipping cache - fetching fresh recipes from Firestore for:' : 'Cache miss - fetching recipes from Firestore for:', { userId, parentId });
+        console.log(skipCache ? 'Skipping cache - fetching fresh recipes from Firestore for parentId:' : 'Cache miss - fetching recipes from Firestore for parentId:', parentId);
       }
 
-      // Build query to handle dual profile system:
-      // 1. If parentId is provided, query for recipes with that parentId OR userId (for migration)
-      // 2. If only userId, query by userId (legacy support)
-      let q;
-      if (parentId) {
-        // Query for recipes that match either the new parentId field OR the legacy userId field
-        // This handles both new recipes (saved with parentId) and legacy recipes (saved with userId)
-        q = query(
-          collection(db, 'recipes'),
-          or(
-            where('parentId', '==', parentId),
-            where('userId', '==', userId)
-          )
-        );
-      } else {
-        // Fallback to legacy userId query
-        q = query(
-          collection(db, 'recipes'),
-          where('userId', '==', userId)
-        );
-      }
+      // Query recipes by parentId only (simplified from legacy dual-field approach)
+      const q = query(
+        collection(db, 'recipes'),
+        where('parentId', '==', parentId)
+      );
 
       const querySnapshot = await getDocs(q);
       const recipes: Recipe[] = [];
@@ -141,20 +119,19 @@ export const recipeService: RecipeService = {
         } as Recipe);
       });
 
-      // Sort locally instead of using Firestore orderBy
+      // Sort by most recently updated
       const sortedRecipes = recipes.sort((a, b) => {
-        // Handle both Date objects and Firestore Timestamps
         const aTime = a.updatedAt ? (a.updatedAt instanceof Date ? a.updatedAt.getTime() : a.updatedAt.toMillis()) : 0;
         const bTime = b.updatedAt ? (b.updatedAt instanceof Date ? b.updatedAt.getTime() : b.updatedAt.toMillis()) : 0;
         return bTime - aTime;
       });
 
       // Cache the results
-      cacheService.setRecipes(userId, sortedRecipes);
+      cacheService.setRecipes(parentId, sortedRecipes);
 
       return sortedRecipes;
     } catch (error) {
-      console.error('Error fetching user recipes:', error);
+      console.error('Error fetching parent recipes:', error);
       throw error;
     }
   },

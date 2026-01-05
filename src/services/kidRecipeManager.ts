@@ -9,9 +9,10 @@ import {
   getDoc,
   query,
   where,
+  orderBy,
   Timestamp
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { db, auth } from './firebase';
 import { aiService } from './aiService';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
@@ -174,7 +175,11 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
           createdAt: Timestamp.now(),
           conversionCount: 1,
           lastConvertedAt: Timestamp.now(),
-          isActive: true,
+          approvalStatus: 'pending',
+          approvalRequestedAt: Timestamp.now(),
+          approvalReviewedAt: null,
+          approvalNotes: null,
+          isActive: false,
         };
 
         // Save using fallback method
@@ -209,13 +214,12 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
   async getKidRecipeByOriginal(originalRecipeId: string, kidId: string): Promise<KidRecipe | null> {
     try {
       if (__DEV__) {
-        console.log(`🔍 Query kidRecipes: originalRecipeId=${originalRecipeId}, kidId=${kidId}, isActive=true`);
+        console.log(`🔍 Query kidRecipes: originalRecipeId=${originalRecipeId}, kidId=${kidId}`);
       }
       const q = query(
         collection(db, 'kidRecipes'),
         where('originalRecipeId', '==', originalRecipeId),
-        where('kidId', '==', kidId),
-        where('isActive', '==', true)
+        where('kidId', '==', kidId)
       );
 
       const querySnapshot = await getDocs(q);
@@ -252,6 +256,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       const q = query(
         collection(db, 'kidRecipes'),
         where('kidId', '==', kidId),
+        where('approvalStatus', '==', 'approved'),
         where('isActive', '==', true)
       );
 
@@ -273,6 +278,51 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
     } catch (error) {
       console.error('Error fetching kid recipes:', error);
       return [];
+    }
+  },
+
+  async getPendingApprovalRecipes(parentId: string): Promise<KidRecipe[]> {
+    try {
+      const q = query(
+        collection(db, 'kidRecipes'),
+        where('parentId', '==', parentId),
+        where('approvalStatus', '==', 'pending'),
+        orderBy('approvalRequestedAt', 'desc')
+      );
+
+      const querySnapshot = await getDocs(q);
+      const pendingRecipes: KidRecipe[] = [];
+
+      querySnapshot.forEach((doc) => {
+        pendingRecipes.push({
+          id: doc.id,
+          ...doc.data(),
+        } as KidRecipe);
+      });
+
+      return pendingRecipes;
+    } catch (error) {
+      console.error('Error fetching pending approval recipes:', error);
+      return [];
+    }
+  },
+
+  async getKidRecipeById(kidRecipeId: string): Promise<KidRecipe | null> {
+    try {
+      const docRef = doc(db, 'kidRecipes', kidRecipeId);
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        return {
+          id: docSnap.id,
+          ...docSnap.data(),
+        } as KidRecipe;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error fetching kid recipe by ID:', error);
+      return null;
     }
   },
 

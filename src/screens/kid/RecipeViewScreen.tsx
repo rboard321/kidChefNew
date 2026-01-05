@@ -23,13 +23,13 @@ import PinInput from '../../components/PinInput';
 import { verifyPin } from '../../utils/pinSecurity';
 import type { KidRecipe, Recipe, KidBadge } from '../../types';
 
-type RecipeViewParams = { recipeId: string; kidId?: string };
+type RecipeViewParams = { recipeId?: string; kidRecipeId?: string; kidId?: string };
 
 export default function RecipeViewScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const { currentKid, parentProfile } = useAuth();
-  const { recipeId, kidId } = (route.params || {}) as RecipeViewParams;
+  const { recipeId, kidRecipeId, kidId } = (route.params || {}) as RecipeViewParams;
   const [currentStep, setCurrentStep] = useState(0);
   const [parentRecipe, setParentRecipe] = useState<Recipe | null>(null);
   const [kidRecipe, setKidRecipe] = useState<KidRecipe | null>(null);
@@ -49,22 +49,19 @@ export default function RecipeViewScreen() {
 
   // Function to scale ingredient measurements for kids
   const scaleKidIngredient = (ingredient: { amount?: number; unit?: string; kidFriendlyName: string }, scale: number) => {
-    // If no amount is specified, or scale is 1, just return the kidFriendlyName as-is
-    // This prevents duplicating amounts that are already included in kidFriendlyName
-    if (!ingredient.amount || scale === 1) {
+    if (!ingredient.amount) {
       return ingredient.kidFriendlyName;
     }
 
-    // Check if kidFriendlyName already contains numbers (indicating it's pre-formatted)
     const hasNumbersInName = /\d/.test(ingredient.kidFriendlyName);
     if (hasNumbersInName) {
-      // If the name already contains numbers, it's likely pre-formatted like "2 large eggs"
-      // In this case, we should scale the numbers in the text rather than prepending
+      if (scale === 1) {
+        return ingredient.kidFriendlyName;
+      }
       return ingredient.kidFriendlyName.replace(/(\d+(?:\.\d+)?)/g, (match) => {
         const num = parseFloat(match);
         const scaled = num * scale;
 
-        // Convert decimals to kid-friendly fractions
         if (scaled === 0.5) return '½';
         if (scaled === 0.25) return '¼';
         if (scaled === 0.75) return '¾';
@@ -117,6 +114,57 @@ export default function RecipeViewScreen() {
     let isMounted = true;
 
     const loadRecipe = async () => {
+      // Kid mode: kidRecipeId is provided, load kid recipe directly
+      if (kidRecipeId && effectiveKidId) {
+        try {
+          setLoading(true);
+          console.log('📚 Loading kid recipe in kid mode:', kidRecipeId);
+
+          // Load the kid recipe directly
+          const kidVersion = await kidRecipeManagerService.getKidRecipe(kidRecipeId);
+          if (!isMounted) return;
+
+          if (kidVersion) {
+            setKidRecipe(kidVersion);
+            setCurrentStep(0);
+
+            // Try to load parent recipe for title/image, but don't fail if permission denied
+            try {
+              const recipe = await recipeService.getRecipe(kidVersion.originalRecipeId);
+              if (isMounted && recipe) {
+                setParentRecipe(recipe);
+              }
+            } catch (parentRecipeError) {
+              console.log('ℹ️ Could not load parent recipe (expected in kid mode):', parentRecipeError?.code);
+              // Create a minimal parent recipe object with just the data we need
+              setParentRecipe({
+                id: kidVersion.originalRecipeId,
+                title: 'Recipe', // Will be overridden by kid recipe data in display
+                sourceUrl: kidVersion.originalRecipeId,
+              } as Recipe);
+            }
+
+            // Try to load favorite status, but don't fail if permission denied
+            try {
+              if (recipeId || kidVersion.originalRecipeId) {
+                await loadFavoriteStatus(kidVersion.originalRecipeId, effectiveKidId);
+              }
+            } catch (favoriteError) {
+              console.log('ℹ️ Could not load favorite status (expected in kid mode):', favoriteError?.code);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error loading kid recipe:', error);
+          Alert.alert('Error', 'Failed to load recipe. Please try again.');
+        } finally {
+          if (isMounted) {
+            setLoading(false);
+          }
+        }
+        return;
+      }
+
+      // Parent mode: recipeId is provided, use original flow
       if (!recipeId || !effectiveKidId) {
         if (isMounted) {
           setLoading(false);
@@ -137,13 +185,13 @@ export default function RecipeViewScreen() {
           );
 
           if (!kidVersion) {
-            const kidRecipeId = await kidRecipeManagerService.convertAndSaveRecipe(
+            const newKidRecipeId = await kidRecipeManagerService.convertAndSaveRecipe(
               recipe,
               effectiveKidId,
               currentKid.readingLevel,
               currentKid.age
             );
-            kidVersion = await kidRecipeManagerService.getKidRecipe(kidRecipeId);
+            kidVersion = await kidRecipeManagerService.getKidRecipe(newKidRecipeId);
           }
 
           if (isMounted) {
@@ -368,7 +416,7 @@ export default function RecipeViewScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#1e40af" />
           <Text style={styles.loadingText}>Getting your recipe ready...</Text>
@@ -379,7 +427,7 @@ export default function RecipeViewScreen() {
 
   if (!effectiveKidId || !parentRecipe || !kidRecipe) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorTitle}>Oops!</Text>
           <Text style={styles.errorText}>
@@ -394,7 +442,7 @@ export default function RecipeViewScreen() {
   const ingredients = kidRecipe.simplifiedIngredients;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <ScrollView style={styles.content}>
         <View style={styles.header}>
           <View style={styles.headerTop}>
