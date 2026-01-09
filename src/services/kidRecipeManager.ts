@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -17,16 +18,17 @@ import { aiService } from './aiService';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from './firebase';
 import { kidProfileService } from './kidProfile';
-import type { Recipe, KidRecipe, ReadingLevel, KidProfile, KidRecipeCacheEntry } from '../types';
+import type { Recipe, KidRecipe, ReadingLevel, KidProfile, KidRecipeCacheEntry, KidIngredient, KidStep } from '../types';
+import { waitForCallableReady } from '../utils/callableReady';
 
 export interface KidRecipeManagerService {
-  convertAndSaveRecipe: (originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number) => Promise<string>;
+  convertAndSaveRecipe: (originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number, forceReconvert?: boolean) => Promise<{ kidRecipeId: string; conversionSource: 'ai' | 'mock' }>;
   getKidRecipe: (kidRecipeId: string) => Promise<KidRecipe | null>;
   getKidRecipeByOriginal: (originalRecipeId: string, kidId: string) => Promise<KidRecipe | null>;
   getKidRecipes: (kidId: string) => Promise<KidRecipe[]>;
   isRecipeAlreadyConverted: (originalRecipeId: string, kidId: string) => Promise<boolean>;
   deleteKidRecipe: (kidRecipeId: string) => Promise<void>;
-  reconvertRecipe: (originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number) => Promise<string>;
+  reconvertRecipe: (originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number) => Promise<{ kidRecipeId: string; conversionSource: 'ai' | 'mock' }>;
   updateConversionCount: (kidRecipeId: string) => Promise<void>;
 }
 
@@ -46,6 +48,49 @@ const stripUndefined = (value: unknown): unknown => {
   return value;
 };
 
+export const buildKidRecipeData = (params: {
+  parentId: string;
+  originalRecipeId: string;
+  originalRecipeTitle: string;
+  originalRecipeImage?: string;
+  originalRecipeUrl?: string;
+  kidId: string;
+  kidAge: number;
+  targetReadingLevel: ReadingLevel;
+  simplifiedIngredients: KidIngredient[];
+  simplifiedSteps: KidStep[];
+  safetyNotes: string[];
+  estimatedDuration?: number;
+  skillsRequired?: string[];
+  conversionSource?: 'ai' | 'mock';
+}): Omit<KidRecipe, 'id'> => ({
+  // DO NOT add userId here – parentId is the only ownership field
+  parentId: params.parentId,
+  originalRecipeId: params.originalRecipeId,
+  originalRecipeTitle: params.originalRecipeTitle,
+  originalRecipeImage: params.originalRecipeImage,
+  originalRecipeUrl: params.originalRecipeUrl,
+  kidId: params.kidId,
+  kidAge: params.kidAge,
+  targetReadingLevel: params.targetReadingLevel,
+  simplifiedIngredients: params.simplifiedIngredients,
+  simplifiedSteps: params.simplifiedSteps,
+  safetyNotes: params.safetyNotes,
+  estimatedDuration: params.estimatedDuration,
+  skillsRequired: params.skillsRequired,
+  createdAt: Timestamp.now(),
+  conversionCount: 1,
+  lastConvertedAt: Timestamp.now(),
+  approvalStatus: 'pending',
+  approvalRequestedAt: Timestamp.now(),
+  approvalReviewedAt: undefined,
+  approvalNotes: undefined,
+  conversionSource: params.conversionSource ?? 'ai',
+  conversionVersion: 'v1',
+  isActive: false,
+  status: 'active',
+});
+
 const getAgeFromLevel = (level: ReadingLevel): number => {
   switch (level) {
     case 'beginner': return 7;
@@ -56,30 +101,62 @@ const getAgeFromLevel = (level: ReadingLevel): number => {
 };
 
 export const kidRecipeManagerService: KidRecipeManagerService = {
-  async convertAndSaveRecipe(originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number): Promise<string> {
+  async convertAndSaveRecipe(
+    originalRecipe: Recipe,
+    kidId: string,
+    readingLevel: ReadingLevel,
+    kidAge?: number,
+    forceReconvert: boolean = false
+  ): Promise<{ kidRecipeId: string; conversionSource: 'ai' | 'mock' }> {
+    const originalRecipeUrl =
+      (originalRecipe as { sourceUrl?: string }).sourceUrl || originalRecipe.url;
+
+    // Get kid profile to extract allergies (before try block so it's accessible in catch)
+    const kidProfile = await kidProfileService.getKidProfile(kidId);
+    if (!kidProfile) {
+      throw new Error(`Kid profile not found for kidId: ${kidId}`);
+    }
+
+    // Get allergy flags from kid profile
+    const allergyFlags = (kidProfile.allergyFlags || []);
+
+    const callConversionFunction = async () => {
+      // Call the Cloud Function which handles conversion, caching, rate limiting, and saving
+      await waitForCallableReady();
+      if (!auth.currentUser) {
+        throw new Error('Please log in again to convert recipes.');
+      }
+      await auth.currentUser.getIdToken(true);
+      const convertRecipeForKid = httpsCallable(functions, 'convertRecipeForKid');
+
+      return convertRecipeForKid({
+        recipeId: originalRecipe.id,
+        kidId,
+        kidAge: kidAge || getAgeFromLevel(readingLevel),
+        readingLevel,
+        allergyFlags
+      });
+    };
+
     try {
       // Check if already converted to avoid duplicates
-      console.log(`🔍 Checking for existing kid recipe: originalId=${originalRecipe.id}, kidId=${kidId}`);
+      logger.debug(`🔍 Checking for existing kid recipe: originalId=${originalRecipe.id}, kidId=${kidId}`);
       const existingKidRecipe = await this.getKidRecipeByOriginal(originalRecipe.id, kidId);
-      if (existingKidRecipe) {
-        console.log(`✅ Recipe already converted for this kid, returning existing ID: ${existingKidRecipe.id}`);
-        return existingKidRecipe.id;
+      if (existingKidRecipe && !forceReconvert) {
+        logger.debug(`✅ Recipe already converted for this kid, returning existing ID: ${existingKidRecipe.id}`);
+        return {
+          kidRecipeId: existingKidRecipe.id,
+          conversionSource: existingKidRecipe.conversionSource ?? 'ai',
+        };
       }
-      console.log(`🆕 No existing kid recipe found, proceeding with new conversion`);
-
-      // Get kid profile to extract allergies
-      const kidProfile = await kidProfileService.getKidProfile(kidId);
-      if (!kidProfile) {
-        throw new Error(`Kid profile not found for kidId: ${kidId}`);
+      if (existingKidRecipe && forceReconvert) {
+        logger.debug(`♻️ Force reconvert enabled - removing existing kid recipe: ${existingKidRecipe.id}`);
+        await deleteDoc(doc(db, 'kidRecipes', existingKidRecipe.id));
       }
-
-      // Get allergy flags from kid profile
-      const allergyFlags = (kidProfile.allergies || []).map(allergy =>
-        typeof allergy === 'string' ? allergy : allergy.allergen
-      );
+      logger.debug(`🆕 No existing kid recipe found, proceeding with new conversion`);
 
       if (__DEV__) {
-        console.log('🚀 Calling Cloud Function for complete recipe conversion:', {
+        logger.debug('🚀 Calling Cloud Function for complete recipe conversion:', {
           recipeId: originalRecipe.id,
           kidId,
           readingLevel,
@@ -88,21 +165,12 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         });
       }
 
-      // Call the Cloud Function which handles conversion, caching, rate limiting, and saving
-      const convertRecipeForKid = httpsCallable(functions, 'convertRecipeForKid');
-
-      const response = await convertRecipeForKid({
-        recipeId: originalRecipe.id,
-        kidId,
-        kidAge: kidAge || getAgeFromLevel(readingLevel),
-        readingLevel,
-        allergyFlags
-      });
+      const response = await callConversionFunction();
 
       const result = response.data as any;
 
       if (__DEV__) {
-        console.log('✅ Cloud Function response received:', {
+        logger.debug('✅ Cloud Function response received:', {
           success: result?.success,
           kidRecipeId: result?.kidRecipeId,
           usedCache: result?.usedCache,
@@ -114,10 +182,24 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         throw new Error('Failed to convert recipe: Invalid response from conversion service');
       }
 
-      console.log(`Kid recipe converted and saved successfully with ID: ${result.kidRecipeId}`);
-      return result.kidRecipeId;
+      try {
+        const displayFields = stripUndefined({
+          originalRecipeTitle: originalRecipe.title,
+          originalRecipeImage: originalRecipe.image,
+          originalRecipeUrl,
+        }) as Record<string, unknown>;
+        await updateDoc(doc(db, 'kidRecipes', result.kidRecipeId), displayFields);
+      } catch (updateError) {
+        console.warn('⚠️ Failed to update kid recipe display fields:', updateError);
+      }
 
-    } catch (error) {
+      logger.debug(`Kid recipe converted and saved successfully with ID: ${result.kidRecipeId}`);
+      return {
+        kidRecipeId: result.kidRecipeId,
+        conversionSource: 'ai',
+      };
+
+    } catch (error: any) {
       console.error('Error converting and saving recipe via Cloud Function:', {
         error: error?.message || error,
         code: error?.code || 'unknown',
@@ -126,6 +208,34 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         readingLevel,
         kidAge
       });
+
+      const isUnauthenticated =
+        error?.code === 'functions/unauthenticated' ||
+        error?.message?.includes('Unauthenticated');
+
+      if (isUnauthenticated) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 750));
+          const retryResponse = await callConversionFunction();
+          const retryResult = retryResponse.data as any;
+          if (retryResult?.success && retryResult?.kidRecipeId) {
+            try {
+              const displayFields = stripUndefined({
+                originalRecipeTitle: originalRecipe.title,
+                originalRecipeImage: originalRecipe.image,
+                originalRecipeUrl,
+              }) as Record<string, unknown>;
+              await updateDoc(doc(db, 'kidRecipes', retryResult.kidRecipeId), displayFields);
+            } catch (updateError) {
+              console.warn('⚠️ Failed to update kid recipe display fields:', updateError);
+            }
+            return { kidRecipeId: retryResult.kidRecipeId, conversionSource: 'ai' };
+          }
+        } catch (retryError) {
+          console.error('Retry after unauthenticated failed:', retryError);
+        }
+        throw new Error('Please log in again and retry the AI conversion.');
+      }
 
       // Provide user-friendly error messages for specific cases
       if (error?.message?.includes('rate limit') || error?.message?.includes('Daily conversion limit')) {
@@ -144,26 +254,20 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         const conversionResult = await aiService.convertToKidFriendly(originalRecipe, readingLevel, kidAge, allergyFlags);
 
         // Get current user and kid profile info for saving
-        const currentUserId = auth.currentUser?.uid;
-        if (!currentUserId) {
+        if (!auth.currentUser?.uid) {
           throw new Error('User must be authenticated to create kid recipes');
         }
 
-        const kidProfile = await kidProfileService.getKidProfile(kidId);
-        if (!kidProfile) {
-          throw new Error(`Kid profile not found for kidId: ${kidId}`);
-        }
-
-        // Get allergy flags from kid profile
-        const allergyFlags = (kidProfile.allergies || []).map(allergy =>
-          typeof allergy === 'string' ? allergy : allergy.allergen
-        );
+        // Note: allergyFlags is already defined at the function level
+        // Re-fetch not needed since we have it from the top of the function
 
         // Create kid recipe object using fallback data
-        const kidRecipe: Omit<KidRecipe, 'id'> = {
-          userId: currentUserId,
+        const kidRecipe: Omit<KidRecipe, 'id'> = buildKidRecipeData({
           parentId: kidProfile.parentId,
           originalRecipeId: originalRecipe.id,
+          originalRecipeTitle: originalRecipe.title,
+          originalRecipeImage: originalRecipe.image,
+          originalRecipeUrl,
           kidId,
           kidAge: conversionResult.kidAge,
           targetReadingLevel: conversionResult.targetReadingLevel,
@@ -172,21 +276,17 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
           safetyNotes: conversionResult.safetyNotes,
           estimatedDuration: conversionResult.estimatedDuration,
           skillsRequired: conversionResult.skillsRequired,
-          createdAt: Timestamp.now(),
-          conversionCount: 1,
-          lastConvertedAt: Timestamp.now(),
-          approvalStatus: 'pending',
-          approvalRequestedAt: Timestamp.now(),
-          approvalReviewedAt: null,
-          approvalNotes: null,
-          isActive: false,
-        };
+          conversionSource: conversionResult.conversionSource ?? 'mock',
+        });
 
         // Save using fallback method
         const docRef = await addDoc(collection(db, 'kidRecipes'), stripUndefined(kidRecipe));
-        console.log('✅ Kid recipe saved successfully using fallback method with ID:', docRef.id);
+        logger.debug('✅ Kid recipe saved successfully using fallback method with ID:', docRef.id);
 
-        return docRef.id;
+        return {
+          kidRecipeId: docRef.id,
+          conversionSource: conversionResult.conversionSource ?? 'mock',
+        };
 
       } catch (fallbackError) {
         console.error('❌ Both Cloud Function and fallback failed:', fallbackError);
@@ -205,7 +305,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         } as KidRecipe;
       }
       return null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching kid recipe:', error);
       return null;
     }
@@ -214,7 +314,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
   async getKidRecipeByOriginal(originalRecipeId: string, kidId: string): Promise<KidRecipe | null> {
     try {
       if (__DEV__) {
-        console.log(`🔍 Query kidRecipes: originalRecipeId=${originalRecipeId}, kidId=${kidId}`);
+        logger.debug(`🔍 Query kidRecipes: originalRecipeId=${originalRecipeId}, kidId=${kidId}`);
       }
       const q = query(
         collection(db, 'kidRecipes'),
@@ -224,12 +324,12 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
 
       const querySnapshot = await getDocs(q);
       if (__DEV__) {
-        console.log(`🔍 Query result: found ${querySnapshot.docs.length} documents`);
+        logger.debug(`🔍 Query result: found ${querySnapshot.docs.length} documents`);
       }
       if (!querySnapshot.empty) {
         const doc = querySnapshot.docs[0];
         if (__DEV__) {
-          console.log(`✅ Found existing kid recipe: ${doc.id}`);
+          logger.debug(`✅ Found existing kid recipe: ${doc.id}`);
         }
         return {
           id: doc.id,
@@ -237,10 +337,10 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
         } as KidRecipe;
       }
       if (__DEV__) {
-        console.log(`❌ No existing kid recipe found`);
+        logger.debug(`❌ No existing kid recipe found`);
       }
       return null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error fetching kid recipe by original:', {
         error: error.message || error,
         code: error.code || 'unknown',
@@ -271,11 +371,23 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       });
 
       return kidRecipes.sort((a, b) => {
-        const aTime = a.createdAt ? (a.createdAt instanceof Date ? a.createdAt.getTime() : a.createdAt.toMillis()) : 0;
-        const bTime = b.createdAt ? (b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt.toMillis()) : 0;
+        const aTime = a.createdAt
+          ? (a.createdAt instanceof Date
+            ? a.createdAt.getTime()
+            : typeof (a.createdAt as any).toMillis === 'function'
+              ? (a.createdAt as any).toMillis()
+              : 0)
+          : 0;
+        const bTime = b.createdAt
+          ? (b.createdAt instanceof Date
+            ? b.createdAt.getTime()
+            : typeof (b.createdAt as any).toMillis === 'function'
+              ? (b.createdAt as any).toMillis()
+              : 0)
+          : 0;
         return bTime - aTime;
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching kid recipes:', error);
       return [];
     }
@@ -301,7 +413,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       });
 
       return pendingRecipes;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching pending approval recipes:', error);
       return [];
     }
@@ -320,7 +432,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       }
 
       return null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching kid recipe by ID:', error);
       return null;
     }
@@ -330,7 +442,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
     try {
       const existingRecipe = await this.getKidRecipeByOriginal(originalRecipeId, kidId);
       return existingRecipe !== null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error checking if recipe is converted:', error);
       return false;
     }
@@ -350,7 +462,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
       const originalRecipeId = kidRecipeData.originalRecipeId;
       const kidId = kidRecipeData.kidId;
 
-      console.log('🗑️ Deleting kid recipe:', {
+      logger.debug('🗑️ Deleting kid recipe:', {
         kidRecipeId,
         originalRecipeId,
         kidId,
@@ -359,7 +471,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
 
       // Delete the kid recipe
       await deleteDoc(doc(db, 'kidRecipes', kidRecipeId));
-      console.log('✅ Kid recipe deleted from kidRecipes collection');
+      logger.debug('✅ Kid recipe deleted from kidRecipes collection');
 
       // Also remove the corresponding shared recipe entry
       if (originalRecipeId && kidId) {
@@ -375,14 +487,14 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
           // Delete all matching shared recipe entries
           const deletePromises = sharedRecipesSnapshot.docs.map(doc => deleteDoc(doc.ref));
           await Promise.all(deletePromises);
-          console.log('✅ Shared recipe entries deleted from sharedRecipes collection:', sharedRecipesSnapshot.docs.length);
+          logger.debug('✅ Shared recipe entries deleted from sharedRecipes collection:', sharedRecipesSnapshot.docs.length);
         } else {
-          console.log('ℹ️ No shared recipe entries found for deletion');
+          logger.debug('ℹ️ No shared recipe entries found for deletion');
         }
       }
 
-      console.log('✅ Kid recipe deletion completed successfully');
-    } catch (error) {
+      logger.debug('✅ Kid recipe deletion completed successfully');
+    } catch (error: any) {
       console.error('❌ Error deleting kid recipe:', {
         error: error?.message || error,
         kidRecipeId,
@@ -392,20 +504,19 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
     }
   },
 
-  async reconvertRecipe(originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number): Promise<string> {
+  async reconvertRecipe(originalRecipe: Recipe, kidId: string, readingLevel: ReadingLevel, kidAge?: number): Promise<{ kidRecipeId: string; conversionSource: 'ai' | 'mock' }> {
     try {
       // Mark existing version as inactive
       const existingKidRecipe = await this.getKidRecipeByOriginal(originalRecipe.id, kidId);
       if (existingKidRecipe) {
         await updateDoc(doc(db, 'kidRecipes', existingKidRecipe.id), {
           isActive: false,
-          deactivatedAt: Timestamp.now(),
         });
       }
 
       // Create new conversion
-      return await this.convertAndSaveRecipe(originalRecipe, kidId, readingLevel, kidAge);
-    } catch (error) {
+      return await this.convertAndSaveRecipe(originalRecipe, kidId, readingLevel, kidAge, true);
+    } catch (error: any) {
       console.error('Error reconverting recipe:', error);
       throw error;
     }
@@ -423,7 +534,7 @@ export const kidRecipeManagerService: KidRecipeManagerService = {
           lastConvertedAt: Timestamp.now(),
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating conversion count:', error);
       throw error;
     }

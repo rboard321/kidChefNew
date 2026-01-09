@@ -242,10 +242,10 @@ export default function KidManagementScreen() {
 
   const getReadingLevelColor = (level: ReadingLevel): string => {
     switch (level) {
-      case 'beginner': return '#10b981';
-      case 'intermediate': return '#f59e0b';
-      case 'advanced': return '#8b5cf6';
-      default: return '#6b7280';
+      case 'beginner': return '#e2e8f0';
+      case 'intermediate': return '#f1f5f9';
+      case 'advanced': return '#e5e7eb';
+      default: return '#e5e7eb';
     }
   };
 
@@ -482,14 +482,16 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   addButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#e2e8f0',
     margin: 20,
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5f5',
   },
   addButtonText: {
-    color: 'white',
+    color: '#1e293b',
     fontSize: 18,
     fontWeight: '600',
   },
@@ -536,7 +538,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   readingText: {
-    color: 'white',
+    color: '#374151',
     fontSize: 12,
     fontWeight: '600',
     textTransform: 'capitalize',
@@ -648,7 +650,7 @@ const styles = StyleSheet.create({
   saveButton: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#2563eb',
+    color: '#1e293b',
   },
   disabledButton: {
     opacity: 0.5,
@@ -694,8 +696,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   selectedLevelButton: {
-    backgroundColor: '#2563eb',
-    borderColor: '#2563eb',
+    backgroundColor: '#e2e8f0',
+    borderColor: '#cbd5f5',
   },
   levelButtonText: {
     fontSize: 14,
@@ -703,7 +705,7 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   selectedLevelButtonText: {
-    color: 'white',
+    color: '#1e293b',
   },
   emojiSelector: {
     flexDirection: 'row',
@@ -721,8 +723,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   selectedEmojiButton: {
-    borderColor: '#2563eb',
-    backgroundColor: '#eff6ff',
+    borderColor: '#cbd5f5',
+    backgroundColor: '#f8fafc',
   },
   emoji: {
     fontSize: 24,
@@ -732,14 +734,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   pinButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#e2e8f0',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#cbd5f5',
   },
   pinButtonText: {
-    color: 'white',
+    color: '#1e293b',
     fontSize: 14,
     fontWeight: '600',
   },

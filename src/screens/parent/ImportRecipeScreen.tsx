@@ -135,7 +135,8 @@ export default function ImportRecipeScreen() {
       setImportError({
         code: 'EMPTY_URL',
         message: 'Invalid recipe URL',
-        canRetry: false
+        canRetry: false,
+        severity: 'low'
       });
       return;
     }
@@ -144,7 +145,8 @@ export default function ImportRecipeScreen() {
       setImportError({
         code: 'UNAUTHENTICATED',
         message: 'You must be logged in to import recipes',
-        canRetry: false
+        canRetry: false,
+        severity: 'high'
       });
       return;
     }
@@ -193,7 +195,8 @@ export default function ImportRecipeScreen() {
       setImportError({
         code: 'IMPORT_FAILED',
         message: error?.message || 'Failed to start import',
-        canRetry: true
+        canRetry: true,
+        severity: 'medium'
       });
       setLoading(false);
     }
@@ -234,11 +237,11 @@ export default function ImportRecipeScreen() {
 
       case 'contact-support':
         // Open support email or help page
-        const supportUrl = 'mailto:support@kidchef.app?subject=Recipe Import Issue';
+        const supportUrl = 'mailto:kidchefapp@gmail.com?subject=Recipe Import Issue';
         Linking.openURL(supportUrl).catch(() => {
           Alert.alert(
             'Contact Support',
-            'Please email us at support@kidchef.app with details about this import issue.',
+            'Please email us at kidchefapp@gmail.com with details about this import issue.',
             [{ text: 'OK' }]
           );
         });

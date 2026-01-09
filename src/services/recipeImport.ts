@@ -3,6 +3,7 @@ import { functions, auth } from './firebase';
 import type { Recipe } from '../types';
 import { validateString, sanitizeHtml, ValidationError } from '../utils/validation';
 import { errorReportingService } from './errorReporting';
+import { logger } from '../utils/logger';
 
 export interface RecipeImportService {
   importFromUrl: (url: string, options?: ImportOptions) => Promise<ImportResult>;
@@ -17,7 +18,7 @@ export interface ImportOptions {
 
 export interface ImportResult {
   success: boolean;
-  recipe?: Omit<Recipe, 'id' | 'userId' | 'createdAt' | 'updatedAt'>;
+  recipe?: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>;
   error?: ImportError;
   partialSuccess?: PartialRecipeData;
   needsReview?: boolean;
@@ -137,7 +138,8 @@ export const recipeImportService: RecipeImportService = {
           message: 'Please enter a valid recipe URL starting with http:// or https://',
           suggestion: 'Make sure the URL is complete and points to a recipe page',
           canRetry: false,
-          allowManualEdit: true
+          allowManualEdit: true,
+          severity: 'low'
         }
       };
     }
@@ -148,8 +150,8 @@ export const recipeImportService: RecipeImportService = {
         onProgress?.(ImportStatus.FETCHING);
 
         if (__DEV__) {
-          console.log('Calling importRecipeSecure with URL:', url);
-          console.log('Current auth user:', auth.currentUser ? { uid: auth.currentUser.uid } : 'null');
+          logger.debug('Calling importRecipeSecure with URL:', url);
+          logger.debug('Current auth user:', auth.currentUser ? { uid: auth.currentUser.uid } : 'null');
         }
 
         // Check if user is authenticated
@@ -160,7 +162,7 @@ export const recipeImportService: RecipeImportService = {
         // Get fresh auth token to ensure we're authenticated
         const token = await auth.currentUser.getIdToken(true); // Force refresh
         if (__DEV__) {
-          console.log('Got auth token:', token ? 'present' : 'null');
+          logger.debug('Got auth token:', token ? 'present' : 'null');
         }
 
         // Environment-aware Cloud Function URL selection
@@ -174,8 +176,8 @@ export const recipeImportService: RecipeImportService = {
         const functionUrl = `https://us-central1-${projectId}.cloudfunctions.net/importRecipeHttp`;
 
         if (__DEV__) {
-          console.log(`Calling importRecipeHttp via HTTP for ${environment} environment...`);
-          console.log('Function URL:', functionUrl);
+          logger.debug(`Calling importRecipeHttp via HTTP for ${environment} environment...`);
+          logger.debug('Function URL:', functionUrl);
         }
 
         const headers = {
@@ -184,7 +186,7 @@ export const recipeImportService: RecipeImportService = {
         };
 
         if (__DEV__) {
-          console.log('Request headers:', {
+          logger.debug('Request headers:', {
             'Content-Type': headers['Content-Type'],
             'Authorization': headers.Authorization ? headers.Authorization.substring(0, 20) + '...' : 'null'
           });
@@ -197,13 +199,13 @@ export const recipeImportService: RecipeImportService = {
         });
 
         if (__DEV__) {
-          console.log('HTTP response status:', response.status);
+          logger.debug('HTTP response status:', response.status);
         }
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
           if (__DEV__) {
-            console.log('HTTP error response:', errorData);
+            logger.debug('HTTP error response:', errorData);
           }
 
           // Handle 404 - Cloud Function not deployed to this environment
@@ -221,7 +223,7 @@ export const recipeImportService: RecipeImportService = {
 
         const result = await response.json();
         if (__DEV__) {
-          console.log('HTTP result:', result);
+          logger.debug('HTTP result:', result);
         }
 
         if (result.status === 'complete') {
@@ -318,7 +320,7 @@ export const recipeImportService: RecipeImportService = {
 
           onRetry?.(attempt, error);
           if (__DEV__) {
-            console.log(`⏱️  Waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`);
+            logger.debug(`⏱️  Waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`);
           }
           await this.delay(delay);
         }
@@ -333,7 +335,8 @@ export const recipeImportService: RecipeImportService = {
         message: 'Failed to import recipe after multiple attempts',
         suggestion: 'Please try again later or use manual entry',
         canRetry: true,
-        allowManualEdit: true
+        allowManualEdit: true,
+        severity: 'high'
       }
     };
   },
@@ -415,7 +418,8 @@ export const recipeImportService: RecipeImportService = {
               message: 'This website did not provide recipe steps',
               suggestion: 'Try a different recipe URL or enter the recipe manually',
               canRetry: false,
-              allowManualEdit: true
+              allowManualEdit: true,
+              severity: 'medium'
             };
           }
 
@@ -425,7 +429,8 @@ export const recipeImportService: RecipeImportService = {
               message: 'This website did not provide ingredients',
               suggestion: 'Try a different recipe URL or enter the recipe manually',
               canRetry: false,
-              allowManualEdit: true
+              allowManualEdit: true,
+              severity: 'medium'
             };
           }
 
@@ -434,7 +439,8 @@ export const recipeImportService: RecipeImportService = {
             code: 'INVALID_RECIPE',
             message: message,
             canRetry: false,
-            allowManualEdit: true
+            allowManualEdit: true,
+            severity: 'medium'
           };
 
         case 'not-found':
@@ -442,7 +448,8 @@ export const recipeImportService: RecipeImportService = {
             code: 'PAGE_NOT_FOUND',
             message: 'Recipe page not found',
             suggestion: 'Check that the URL is correct and the page exists',
-            canRetry: false
+            canRetry: false,
+            severity: 'low'
           };
 
         case 'deadline-exceeded':
@@ -472,7 +479,8 @@ export const recipeImportService: RecipeImportService = {
             code: 'UNKNOWN_ERROR',
             message: message,
             canRetry: true,
-            allowManualEdit: true
+            allowManualEdit: true,
+            severity: 'medium'
           };
       }
     }
@@ -529,7 +537,7 @@ export const recipeImportService: RecipeImportService = {
     };
   },
 
-  convertScrapedRecipe(scraped: ScrapedRecipe): Omit<Recipe, 'id' | 'userId' | 'createdAt' | 'updatedAt'> {
+  convertScrapedRecipe(scraped: ScrapedRecipe): Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'> {
     const tags = scraped.tags || this.extractTagsFromTitle(scraped.title);
     const mealType = this.inferMealType(scraped.title, tags);
 

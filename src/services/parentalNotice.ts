@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -279,7 +280,7 @@ export const parentalNoticeService: ParentalNoticeService = {
       await this.sendEmailNotification(parentEmail, template.title, message);
 
       if (__DEV__) {
-        console.log('Parental notice sent:', {
+        logger.debug('Parental notice sent:', {
           noticeId: docRef.id,
           type: noticeType,
           recipient: parentEmail,
@@ -295,10 +296,10 @@ export const parentalNoticeService: ParentalNoticeService = {
 
   async sendEmailNotification(email: string, subject: string, message: string): Promise<void> {
     // In production, this would integrate with a real email service
-    console.log('📧 EMAIL NOTIFICATION');
-    console.log('To:', email);
-    console.log('Subject:', subject);
-    console.log('Message:', message.substring(0, 200) + '...');
+    logger.debug('📧 EMAIL NOTIFICATION');
+    logger.debug('To:', email);
+    logger.debug('Subject:', subject);
+    logger.debug('Message:', message.substring(0, 200) + '...');
 
     // TODO: Integrate with Firebase Functions to send actual emails
     // Example implementation would call a cloud function:
@@ -344,7 +345,7 @@ export const parentalNoticeService: ParentalNoticeService = {
         acknowledgedAt: Timestamp.now(),
       });
 
-      console.log('Notice acknowledged:', noticeId);
+      logger.debug('Notice acknowledged:', noticeId);
     } catch (error) {
       console.error('Error acknowledging notice:', error);
       throw error;

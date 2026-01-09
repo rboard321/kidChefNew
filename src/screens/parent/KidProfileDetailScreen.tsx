@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -13,12 +14,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, type RouteProp } from '@react-navigation/native';
 import { kidRecipeManagerService } from '../../services/kidRecipeManager';
 import { recipeService } from '../../services/recipes';
+import { incrementConversionCount } from '../../services/usageTracking';
 import type { KidProfile, KidRecipe, Recipe, RootStackParamList, ReadingLevel } from '../../types';
 
 type KidProfileDetailRouteProp = RouteProp<RootStackParamList, 'KidProfileDetail'>;
 
 interface RecipeWithDetails extends KidRecipe {
   recipeTitle: string;
+  originalRecipe?: Recipe | null;
 }
 
 export default function KidProfileDetailScreen() {
@@ -30,6 +33,7 @@ export default function KidProfileDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingRecipes, setDeletingRecipes] = useState<Set<string>>(new Set());
+  const [retryingRecipes, setRetryingRecipes] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadRecipes();
@@ -37,11 +41,11 @@ export default function KidProfileDetailScreen() {
 
   const loadRecipes = async () => {
     try {
-      console.log('Loading recipes for kid:', kid.id);
+      logger.debug('Loading recipes for kid:', kid.id);
 
       // Fetch kid recipes for this kid
       const kidRecipes = await kidRecipeManagerService.getKidRecipes(kid.id);
-      console.log(`Found ${kidRecipes.length} kid recipes`);
+      logger.debug(`Found ${kidRecipes.length} kid recipes`);
 
       // Fetch original recipe details for each kid recipe to get the title
       const recipesWithDetails: RecipeWithDetails[] = [];
@@ -52,12 +56,14 @@ export default function KidProfileDetailScreen() {
           recipesWithDetails.push({
             ...kidRecipe,
             recipeTitle: originalRecipe?.title || 'Untitled Recipe',
+            originalRecipe: originalRecipe || null,
           });
         } catch (error) {
           console.error('Error fetching original recipe:', error);
           recipesWithDetails.push({
             ...kidRecipe,
             recipeTitle: 'Untitled Recipe',
+            originalRecipe: null,
           });
         }
       }
@@ -116,6 +122,46 @@ export default function KidProfileDetailScreen() {
     }
   };
 
+  const handleRetryAI = async (recipe: RecipeWithDetails) => {
+    if (!recipe.originalRecipe) {
+      try {
+        const fetched = await recipeService.getRecipe(recipe.originalRecipeId);
+        if (!fetched) {
+          Alert.alert('Missing Recipe', 'Original recipe could not be found.');
+          return;
+        }
+        recipe = { ...recipe, originalRecipe: fetched };
+      } catch (error) {
+        console.error('Error fetching original recipe for retry:', error);
+        Alert.alert('Error', 'Unable to retry AI conversion right now.');
+        return;
+      }
+    }
+
+    try {
+      setRetryingRecipes(prev => new Set(prev).add(recipe.id));
+      const result = await kidRecipeManagerService.reconvertRecipe(
+        recipe.originalRecipe,
+        kid.id,
+        kid.readingLevel,
+        kid.age
+      );
+      if (result.conversionSource === 'ai') {
+        await incrementConversionCount(kid.parentId);
+      }
+      await loadRecipes();
+    } catch (error) {
+      console.error('Error retrying AI conversion:', error);
+      Alert.alert('Retry Failed', 'Unable to convert with AI. Please try again later.');
+    } finally {
+      setRetryingRecipes(prev => {
+        const next = new Set(prev);
+        next.delete(recipe.id);
+        return next;
+      });
+    }
+  };
+
   const getReadingLevelColor = (level: ReadingLevel): string => {
     switch (level) {
       case 'beginner': return '#10b981';
@@ -156,6 +202,8 @@ export default function KidProfileDetailScreen() {
 
   const renderRecipeItem = ({ item }: { item: RecipeWithDetails }) => {
     const isDeleting = deletingRecipes.has(item.id);
+    const isRetrying = retryingRecipes.has(item.id);
+    const isMock = item.conversionSource === 'mock';
 
     return (
       <View style={styles.recipeCard}>
@@ -165,21 +213,41 @@ export default function KidProfileDetailScreen() {
             <View style={[styles.readingBadge, { backgroundColor: getReadingLevelColor(item.targetReadingLevel) }]}>
               <Text style={styles.readingText}>{item.targetReadingLevel}</Text>
             </View>
+            {isMock && (
+              <View style={styles.mockBadge}>
+                <Text style={styles.mockBadgeText}>Mock</Text>
+              </View>
+            )}
             <Text style={styles.recipeDateText}>Added {formatDate(item.createdAt)}</Text>
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.deleteButton, isDeleting && styles.deleteButtonDisabled]}
-          onPress={() => handleDeleteRecipe(item)}
-          disabled={isDeleting}
-        >
-          {isDeleting ? (
-            <ActivityIndicator size="small" color="#ef4444" />
-          ) : (
-            <Text style={styles.deleteButtonText}>🗑️</Text>
+        <View style={styles.recipeActions}>
+          {isMock && (
+            <TouchableOpacity
+              style={[styles.retryButton, isRetrying && styles.retryButtonDisabled]}
+              onPress={() => handleRetryAI(item)}
+              disabled={isRetrying}
+            >
+              {isRetrying ? (
+                <ActivityIndicator size="small" color="#6b7280" />
+              ) : (
+                <Text style={styles.retryButtonText}>Retry AI</Text>
+              )}
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.deleteButton, isDeleting && styles.deleteButtonDisabled]}
+            onPress={() => handleDeleteRecipe(item)}
+            disabled={isDeleting}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color="#ef4444" />
+            ) : (
+              <Text style={styles.deleteButtonText}>🗑️</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -351,6 +419,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  mockBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: '#f3f4f6',
+  },
+  mockBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
   readingBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -365,6 +444,28 @@ const styles = StyleSheet.create({
   recipeDateText: {
     fontSize: 13,
     color: '#9ca3af',
+  },
+  recipeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 12,
+  },
+  retryButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  retryButtonDisabled: {
+    opacity: 0.5,
+  },
+  retryButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
   },
   deleteButton: {
     width: 40,

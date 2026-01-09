@@ -103,7 +103,8 @@ export const useConversionStatus = (taskId: string) => {
     queryKey: queryKeys.conversionTask(taskId),
     queryFn: () => conversionStatusService.getConversionStatus(taskId),
     enabled: !!taskId,
-    refetchInterval: (data) => {
+    refetchInterval: (query) => {
+      const data = query.state.data;
       // Poll more frequently for active conversions
       if (data?.status === ConversionStatus.QUEUED || data?.status === ConversionStatus.CONVERTING) {
         return 2000; // 2 seconds

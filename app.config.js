@@ -38,7 +38,7 @@ export default {
     newArchEnabled: true,
     scheme: getScheme(),
     splash: {
-      image: './assets/splash-icon.png',
+      image: './assets/splash-icon1.png',
       resizeMode: 'contain',
       backgroundColor: '#ffffff'
     },

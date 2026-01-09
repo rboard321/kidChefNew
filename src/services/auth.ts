@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -15,6 +16,7 @@ import type { ParentProfile } from '../types';
 export interface AuthService {
   signUp: (email: string, password: string, profile: Partial<ParentProfile>) => Promise<User>;
   signIn: (email: string, password: string) => Promise<User>;
+  signInWithGoogle: () => Promise<User>;
   signOut: () => Promise<void>;
   onAuthStateChanged: (callback: (user: User | null) => void) => () => void;
   onIdTokenChanged: (callback: (user: User | null) => void) => () => void;
@@ -24,12 +26,12 @@ export interface AuthService {
 
 export const authService: AuthService = {
   async signUp(email: string, password: string, profile: Partial<ParentProfile>) {
-    console.log('🔐 Starting signup process for email:', email);
+    logger.debug('🔐 Starting signup process for email:', email);
 
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-    console.log('👤 User account created successfully:', {
+    logger.debug('👤 User account created successfully:', {
       uid: user.uid,
       email: user.email,
       emailVerified: user.emailVerified
@@ -37,9 +39,9 @@ export const authService: AuthService = {
 
     try {
       // Send email verification immediately after account creation
-      console.log('📧 Attempting to send verification email...');
+      logger.debug('📧 Attempting to send verification email...');
       await authService.sendEmailVerification(user);
-      console.log('✅ Signup process completed successfully');
+      logger.debug('✅ Signup process completed successfully');
     } catch (emailError) {
       console.warn('⚠️ Signup succeeded but email verification failed:', emailError);
       // Don't throw here - user account was created successfully
@@ -52,6 +54,10 @@ export const authService: AuthService = {
   async signIn(email: string, password: string) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     return userCredential.user;
+  },
+
+  async signInWithGoogle() {
+    throw new Error('Google sign-in is not configured.');
   },
 
   async signOut() {
@@ -69,21 +75,21 @@ export const authService: AuthService = {
 
   async sendEmailVerification(user: User) {
     try {
-      console.log('📧 Starting email verification process:', {
+      logger.debug('📧 Starting email verification process:', {
         userEmail: user.email,
         userUID: user.uid,
         emailVerified: user.emailVerified,
         timestamp: new Date().toISOString()
       });
 
-      console.log('📧 Attempting to send email verification without custom settings first...');
+      logger.debug('📧 Attempting to send email verification without custom settings first...');
 
       await firebaseSendEmailVerification(user);
 
-      console.log('✅ Email verification sent successfully to:', user.email);
+      logger.debug('✅ Email verification sent successfully to:', user.email);
 
       if (__DEV__) {
-        console.log('🔍 Email verification debug info:', {
+        logger.debug('🔍 Email verification debug info:', {
           userEmail: user.email,
           userUID: user.uid,
           providerData: user.providerData,
@@ -107,7 +113,7 @@ export const authService: AuthService = {
 
   async checkEmailVerification(user: User): Promise<boolean> {
     try {
-      console.log('📧 Checking email verification for user:', {
+      logger.debug('📧 Checking email verification for user:', {
         uid: user.uid,
         email: user.email,
         emailVerified: user.emailVerified,
@@ -117,7 +123,7 @@ export const authService: AuthService = {
 
       await reload(user);
 
-      console.log('📧 After user reload:', {
+      logger.debug('📧 After user reload:', {
         uid: user.uid,
         email: user.email,
         emailVerified: user.emailVerified,
@@ -129,19 +135,19 @@ export const authService: AuthService = {
 
       // Update parent profile verification status if changed
       if (isVerified) {
-        console.log('✅ User is verified, updating parent profile...');
+        logger.debug('✅ User is verified, updating parent profile...');
         try {
           await setDoc(doc(db, 'parentProfiles', user.uid), { emailVerified: true }, { merge: true });
-          console.log('✅ Parent profile verification status updated');
+          logger.debug('✅ Parent profile verification status updated');
         } catch (docError) {
           console.error('⚠️ Failed to update parent profile verification status:', docError);
           // Don't fail the verification check if profile update fails
         }
       } else {
-        console.log('❌ User email is still not verified after reload');
+        logger.debug('❌ User email is still not verified after reload');
       }
 
-      console.log('📧 Final verification result:', {
+      logger.debug('📧 Final verification result:', {
         isVerified,
         uid: user.uid,
         email: user.email,
@@ -149,7 +155,7 @@ export const authService: AuthService = {
       });
 
       return isVerified;
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Error checking email verification:', {
         error: error?.message || error,
         code: error?.code || 'unknown',

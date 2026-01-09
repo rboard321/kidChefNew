@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -28,10 +29,11 @@ export const recipeFavoritesService: RecipeFavoritesService = {
       const validatedRecipeId = validateDocumentId(recipeId, 'Recipe ID');
       const validatedParentId = validateDocumentId(parentId, 'Parent ID');
       const validatedKidId = kidId ? validateDocumentId(kidId, 'Kid ID') : undefined;
+      const recipeType: RecipeFavorite['recipeType'] = validatedKidId ? 'kid' : 'parent';
 
-      console.log('toggleFavorite called with:', { recipeId: validatedRecipeId, parentId: validatedParentId, kidId: validatedKidId });
+      logger.debug('toggleFavorite called with:', { recipeId: validatedRecipeId, parentId: validatedParentId, kidId: validatedKidId });
       const favoriteId = validatedKidId ? `${validatedParentId}_${validatedKidId}_${validatedRecipeId}` : `${validatedParentId}_${validatedRecipeId}`;
-      console.log('Generated favoriteId:', favoriteId);
+      logger.debug('Generated favoriteId:', favoriteId);
 
       // Validate that the document ID is safe
       if (favoriteId.length > 1500) { // Firestore limit is ~1500 characters
@@ -42,15 +44,15 @@ export const recipeFavoritesService: RecipeFavoritesService = {
 
       // Check if favorite already exists
       const favoriteDoc = await getDoc(favoriteRef);
-      console.log('Existing favorite document exists:', favoriteDoc.exists());
+      logger.debug('Existing favorite document exists:', favoriteDoc.exists());
 
       if (__DEV__) {
-        console.log('Current user auth state:', {
+        logger.debug('Current user auth state:', {
           uid: auth.currentUser?.uid,
           timestamp: new Date().toISOString()
         });
 
-        console.log('Document data being written:', {
+        logger.debug('Document data being written:', {
           recipeId: validatedRecipeId,
           parentId: validatedParentId,
           kidId: validatedKidId,
@@ -68,8 +70,9 @@ export const recipeFavoritesService: RecipeFavoritesService = {
 
         await setDoc(favoriteRef, {
           ...existingFavorite,
-          parentUserId: auth.currentUser?.uid || existingFavorite.parentUserId,
           isFavorited: newFavoriteStatus,
+          recipeType: existingFavorite.recipeType ?? recipeType,
+          status: existingFavorite.status ?? 'active',
           updatedAt: now,
         });
 
@@ -79,9 +82,10 @@ export const recipeFavoritesService: RecipeFavoritesService = {
         const newFavorite: Omit<RecipeFavorite, 'id'> = {
           recipeId,
           parentId,
-          parentUserId: auth.currentUser?.uid || '',
           ...(kidId && { kidId }),  // Only include kidId if it exists
           isFavorited: true,
+          recipeType,
+          status: 'active',
           createdAt: now,
           updatedAt: now,
         };
@@ -116,7 +120,7 @@ export const recipeFavoritesService: RecipeFavoritesService = {
 
       const favoriteRef = doc(db, 'recipeFavorites', favoriteId);
 
-      console.log('isFavorite attempting to read document:', {
+      logger.debug('isFavorite attempting to read document:', {
         favoriteId,
         user: auth.currentUser?.uid,
         timestamp: new Date().toISOString()

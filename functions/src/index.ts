@@ -10,6 +10,9 @@ import { enhancedRequestService } from './services/enhancedRequestService';
 
 admin.initializeApp();
 
+const functionEnvironment = functions.config().environment?.name || process.env.NODE_ENV || 'development';
+const shouldEnforceAppCheck = () => functionEnvironment == 'production';
+
 // Initialize OpenAI - API key stored securely in environment variables
 const openaiApiKey = functions.config().openai?.api_key || process.env.OPENAI_API_KEY;
 const openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
@@ -53,7 +56,7 @@ interface RecipeCacheEntry {
   provider: 'scrape' | 'ai';
 }
 
-export const scrapeRecipeV2 = functions.https.onCall(async (data, context) => {
+export const scrapeRecipeV2 = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   try {
     const { url } = data;
 
@@ -1913,7 +1916,6 @@ interface KidProfile {
   experience: 'beginner' | 'intermediate' | 'advanced';
   favoriteRecipes: string[];
   parentId: string;
-  userId: string; // For backward compatibility
   createdAt: admin.firestore.FieldValue;
   updatedAt: admin.firestore.FieldValue;
   isActive: boolean;
@@ -2060,7 +2062,7 @@ async function checkRateLimit(userId: string, actionType: 'import' | 'conversion
 }
 
 // Cloud Function to convert recipes to kid-friendly versions with caching and rate limiting
-export const convertRecipeForKid = functions.https.onCall(async (data: KidConversionRequest, context) => {
+export const convertRecipeForKid = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: KidConversionRequest, context) => {
   try {
     // Authentication check
     if (!context.auth) {
@@ -2096,9 +2098,10 @@ export const convertRecipeForKid = functions.https.onCall(async (data: KidConver
       throw new functions.https.HttpsError('internal', 'Recipe data is invalid');
     }
 
-    // Verify user owns this recipe
-    const isOwner = recipe.userId === context.auth.uid ||
-                   (recipe.parentId && await isUserOwnerOfParentProfile(context.auth.uid, recipe.parentId));
+    // Verify user owns this recipe via parent profile
+    const isOwner = recipe.parentId
+      ? await isUserOwnerOfParentProfile(context.auth.uid, recipe.parentId)
+      : false;
 
     if (!isOwner) {
       throw new functions.https.HttpsError('permission-denied', 'You do not have permission to convert this recipe');
@@ -2150,7 +2153,7 @@ export const convertRecipeForKid = functions.https.onCall(async (data: KidConver
         }
       }
 
-      const kidRecipeId = await createKidRecipeFromCache(recipeId, kidAge, readingLevel, cached, context.auth.uid, kidId, parentId);
+      const kidRecipeId = await createKidRecipeFromCache(recipeId, kidAge, readingLevel, cached, kidId, parentId);
 
       // Rate limit counter already updated by checkRateLimit transaction
 
@@ -2185,7 +2188,8 @@ export const convertRecipeForKid = functions.https.onCall(async (data: KidConver
       cacheKey: cacheKey,
       sourceUrl: sourceUrl
     });
-    await storeConversionInCache(cacheKey, enhancedConversion, sourceUrl);
+    const recipeParentId = recipe.parentId || null;
+    await storeConversionInCache(cacheKey, enhancedConversion, sourceUrl, recipeParentId);
 
     // Create kid recipe
     // Get parentId from kidId if provided (same logic as cache path)
@@ -2201,7 +2205,7 @@ export const convertRecipeForKid = functions.https.onCall(async (data: KidConver
       }
     }
 
-    const kidRecipeId = await createKidRecipe(recipeId, kidAge, readingLevel, enhancedConversion, context.auth.uid, kidId, parentId);
+    const kidRecipeId = await createKidRecipe(recipeId, kidAge, readingLevel, enhancedConversion, kidId, parentId);
 
     // Rate limit counter already updated by checkRateLimit transaction
 
@@ -2227,7 +2231,7 @@ export const convertRecipeForKid = functions.https.onCall(async (data: KidConver
 });
 
 // HTTP endpoint for recipe import that handles React Native auth properly
-export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
+export const importRecipeHttp = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onRequest(async (req, res) => {
   try {
     // Set CORS headers
     res.set('Access-Control-Allow-Origin', '*');
@@ -2517,8 +2521,69 @@ export const importRecipeHttp = functions.https.onRequest(async (req, res) => {
   }
 });
 
+/**
+ * Infers meal type from recipe title
+ * Detects breakfast, lunch, dinner, snack, or dessert based on keywords
+ */
+function inferMealType(title: string): string {
+  const titleLower = title.toLowerCase();
+
+  // Dessert detection (highest priority for sweets)
+  const dessertKeywords = [
+    'cake', 'cookie', 'brownie', 'pie', 'tart', 'cupcake',
+    'dessert', 'sweet', 'candy', 'chocolate', 'ice cream',
+    'pudding', 'mousse', 'truffle', 'fudge', 'macaron',
+    'cheesecake', 'tiramisu', 'pavlova', 'souffle'
+  ];
+  if (dessertKeywords.some(keyword => titleLower.includes(keyword))) {
+    return 'dessert';
+  }
+
+  // Breakfast detection
+  const breakfastKeywords = [
+    'pancake', 'waffle', 'breakfast', 'cereal', 'oatmeal',
+    'french toast', 'bagel', 'muffin', 'scone', 'eggs',
+    'omelet', 'omelette', 'frittata', 'quiche', 'crepe',
+    'granola', 'smoothie bowl', 'breakfast burrito'
+  ];
+  if (breakfastKeywords.some(keyword => titleLower.includes(keyword))) {
+    return 'breakfast';
+  }
+
+  // Lunch detection
+  const lunchKeywords = [
+    'sandwich', 'salad', 'wrap', 'panini', 'burger',
+    'soup', 'lunch', 'bowl'
+  ];
+  if (lunchKeywords.some(keyword => titleLower.includes(keyword))) {
+    return 'lunch';
+  }
+
+  // Dinner detection
+  const dinnerKeywords = [
+    'dinner', 'roast', 'steak', 'chicken breast', 'salmon',
+    'casserole', 'lasagna', 'pasta bake', 'pot roast',
+    'stew', 'curry', 'stirfry', 'stir-fry', 'grill'
+  ];
+  if (dinnerKeywords.some(keyword => titleLower.includes(keyword))) {
+    return 'dinner';
+  }
+
+  // Snack detection
+  const snackKeywords = [
+    'snack', 'dip', 'chips', 'nachos', 'popcorn',
+    'trail mix', 'energy ball', 'protein ball'
+  ];
+  if (snackKeywords.some(keyword => titleLower.includes(keyword))) {
+    return 'snack';
+  }
+
+  // Default: if nothing matches, return empty string (user can set manually)
+  return '';
+}
+
 // HTTP endpoint to save an imported recipe from the share extension
-export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res) => {
+export const saveImportedRecipeHttp = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onRequest(async (req, res) => {
   try {
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'POST');
@@ -2586,6 +2651,9 @@ export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res)
     const parentProfileId = parentProfiles.docs[0].id;
     const now = admin.firestore.Timestamp.now();
 
+    // Infer mealType from title if not provided by scraper
+    const inferredMealType = recipe.mealType || inferMealType(title);
+
     const recipeData = {
       title,
       description: recipe.description || '',
@@ -2596,7 +2664,7 @@ export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res)
       totalTime: recipe.totalTime || '',
       difficulty: recipe.difficulty || '',
       cuisine: recipe.cuisine || '',
-      mealType: recipe.mealType || '',
+      mealType: inferredMealType,
       ingredients,
       instructions,
       url: sourceUrl || '',
@@ -2604,7 +2672,7 @@ export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res)
       importStatus,
       importIssues,
       importConfidence,
-      userId: decodedToken.uid,
+      status: 'active',
       parentId: parentProfileId,
       createdAt: now,
       updatedAt: now,
@@ -2640,7 +2708,7 @@ export const saveImportedRecipeHttp = functions.https.onRequest(async (req, res)
 });
 
 // Cloud Function to import recipes securely
-export const importRecipeSecure = functions.https.onCall(async (data: { url: string }, context) => {
+export const importRecipeSecure = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: { url: string }, context) => {
   try {
     console.log('importRecipeSecure called with context:', {
       authExists: !!context.auth,
@@ -2888,7 +2956,7 @@ async function createParentProfile(userId: string, email: string) {
 }
 
 // Cloud Function to create and manage kid profiles
-export const createKidProfile = functions.https.onCall(async (data: {
+export const createKidProfile = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
   name: string;
   age: number;
   readingLevel: 'beginner' | 'intermediate' | 'advanced';
@@ -2931,7 +2999,6 @@ export const createKidProfile = functions.https.onCall(async (data: {
       experience,
       favoriteRecipes: [],
       parentId: parentProfile.id,
-      userId: context.auth.uid, // For backward compatibility
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       isActive: true,
@@ -2961,7 +3028,7 @@ export const createKidProfile = functions.https.onCall(async (data: {
 });
 
 // Cloud Function to get kid profile by ID
-export const getKidProfileById = functions.https.onCall(async (data: { kidProfileId: string }, context) => {
+export const getKidProfileById = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: { kidProfileId: string }, context) => {
   try {
     // Authentication check
     if (!context.auth) {
@@ -2979,8 +3046,8 @@ export const getKidProfileById = functions.https.onCall(async (data: { kidProfil
       throw new functions.https.HttpsError('not-found', 'Kid profile not found');
     }
 
-    // Verify user owns this profile
-    if (profile.userId !== context.auth.uid) {
+    // Verify user owns this profile via parent profile
+    if (!profile.parentId || !(await isUserOwnerOfParentProfile(context.auth.uid, profile.parentId))) {
       throw new functions.https.HttpsError('permission-denied', 'You do not have permission to access this profile');
     }
 
@@ -3012,7 +3079,7 @@ async function getKidProfile(kidProfileId: string): Promise<KidProfile | null> {
 }
 
 // Cloud Function to rate and provide feedback on kid recipes
-export const rateKidRecipe = functions.https.onCall(async (data: {
+export const rateKidRecipe = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
   kidRecipeId: string;
   rating: number;
   feedback?: {
@@ -3050,8 +3117,8 @@ export const rateKidRecipe = functions.https.onCall(async (data: {
       throw new functions.https.HttpsError('internal', 'Kid recipe data is invalid');
     }
 
-    // Verify user owns this recipe
-    if (kidRecipe.userId !== context.auth.uid) {
+    // Verify user owns this recipe via parent profile
+    if (!kidRecipe.parentId || !(await isUserOwnerOfParentProfile(context.auth.uid, kidRecipe.parentId))) {
       throw new functions.https.HttpsError('permission-denied', 'You do not have permission to rate this recipe');
     }
 
@@ -3063,7 +3130,7 @@ export const rateKidRecipe = functions.https.onCall(async (data: {
         rating,
         feedback: feedback || null,
         submittedAt: admin.firestore.FieldValue.serverTimestamp(),
-        userId: context.auth.uid
+        // No userId stored on kid recipes; parentId ownership only
       },
       lastUpdated: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -3612,7 +3679,12 @@ async function checkConversionCache(cacheKey: string) {
   }
 }
 
-async function storeConversionInCache(cacheKey: string, conversion: any, sourceUrl: string): Promise<void> {
+async function storeConversionInCache(
+  cacheKey: string,
+  conversion: any,
+  sourceUrl: string,
+  parentId: string | null
+): Promise<void> {
   try {
     console.log('💾 Storing conversion in cache:', {
       cacheKey: cacheKey,
@@ -3623,6 +3695,7 @@ async function storeConversionInCache(cacheKey: string, conversion: any, sourceU
     });
 
     const cacheData = {
+      parentId: parentId || null,
       sourceUrl,
       simplifiedIngredients: conversion.simplifiedIngredients,
       simplifiedSteps: conversion.simplifiedSteps,
@@ -3651,10 +3724,9 @@ async function storeConversionInCache(cacheKey: string, conversion: any, sourceU
   }
 }
 
-async function createKidRecipeFromCache(recipeId: string, kidAge: number, readingLevel: string, cached: any, userId: string, kidId?: string, parentId?: string): Promise<string> {
+async function createKidRecipeFromCache(recipeId: string, kidAge: number, readingLevel: string, cached: any, kidId?: string, parentId?: string): Promise<string> {
   const kidRecipeData = {
     originalRecipeId: recipeId,
-    userId, // Keep for backward compatibility
     kidId: kidId || null, // Add kidId field
     parentId: parentId || null, // Add parentId field
     kidAge,
@@ -3669,7 +3741,10 @@ async function createKidRecipeFromCache(recipeId: string, kidAge: number, readin
     approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
     approvalReviewedAt: null,
     approvalNotes: null,
+    conversionSource: 'ai',
+    conversionVersion: 'v1',
     isActive: false,
+    status: 'active',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
     // Allergy information (if available)
@@ -3827,10 +3902,9 @@ Return the response as JSON in this exact format:
   }
 }
 
-async function createKidRecipe(recipeId: string, kidAge: number, readingLevel: string, conversion: any, userId: string, kidId?: string, parentId?: string): Promise<string> {
+async function createKidRecipe(recipeId: string, kidAge: number, readingLevel: string, conversion: any, kidId?: string, parentId?: string): Promise<string> {
   const kidRecipeData = {
     originalRecipeId: recipeId,
-    userId, // Keep for backward compatibility
     kidId: kidId || null, // Add kidId field
     parentId: parentId || null, // Add parentId field
     kidAge,
@@ -3845,7 +3919,10 @@ async function createKidRecipe(recipeId: string, kidAge: number, readingLevel: s
     approvalRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
     approvalReviewedAt: null,
     approvalNotes: null,
+    conversionSource: 'ai',
+    conversionVersion: 'v1',
     isActive: false,
+    status: 'active',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
 
     // Allergy information (if provided)
@@ -3945,7 +4022,7 @@ function validateAIResponse(response: any): any {
   return response;
 }
 
-export const reportUnclearStep = functions.https.onCall(async (data: {
+export const reportUnclearStep = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
   kidRecipeId: string;
   stepIndex: number;
   kidId: string;
@@ -4060,6 +4137,217 @@ export const reportUnclearStep = functions.https.onCall(async (data: {
     }
 
     throw new functions.https.HttpsError('internal', 'Failed to report step issue');
+  }
+});
+
+export const explainRecipeStep = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
+  kidRecipeId: string;
+  stepIndex: number;
+}, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+  }
+
+  const { kidRecipeId, stepIndex } = data;
+  if (!kidRecipeId || typeof stepIndex !== 'number') {
+    throw new functions.https.HttpsError('invalid-argument', 'kidRecipeId and stepIndex are required');
+  }
+
+  try {
+    const cacheId = `${kidRecipeId}_${stepIndex}`;
+    const cacheRef = admin.firestore().collection('stepExplanations').doc(cacheId);
+    const cacheDoc = await cacheRef.get();
+    if (cacheDoc.exists) {
+      const cached = cacheDoc.data();
+      if (cached?.explanation) {
+        return { explanation: cached.explanation, cached: true };
+      }
+    }
+
+    const kidRecipeRef = admin.firestore().collection('kidRecipes').doc(kidRecipeId);
+    const kidRecipeDoc = await kidRecipeRef.get();
+    if (!kidRecipeDoc.exists) {
+      throw new functions.https.HttpsError('not-found', 'Kid recipe not found');
+    }
+
+    const kidRecipe = kidRecipeDoc.data();
+    if (!kidRecipe) {
+      throw new functions.https.HttpsError('internal', 'Failed to load kid recipe data');
+    }
+
+    if (!kidRecipe.parentId || !(await isUserOwnerOfParentProfile(context.auth.uid, kidRecipe.parentId))) {
+      throw new functions.https.HttpsError('permission-denied', 'Not authorized to access this recipe');
+    }
+
+    const steps = kidRecipe.simplifiedSteps || [];
+    const step = steps[stepIndex];
+    const stepText = step?.kidFriendlyText || step?.step;
+    if (!stepText) {
+      throw new functions.https.HttpsError('failed-precondition', 'Step text not available');
+    }
+
+    const apiKey = functions.config().openai?.api_key || process.env.OPENAI_API_KEY;
+    if (!apiKey || !openai) {
+      throw new functions.https.HttpsError('failed-precondition', 'AI explanation service not available');
+    }
+
+    const prompt = `
+You are helping a child cook with a parent nearby.
+
+Explain the following recipe step in simple, friendly language.
+Include:
+- What to do
+- Why it matters
+- Any safety notes (if relevant)
+
+Step:
+"${stepText}"
+`.trim();
+
+    const completion = await Promise.race([
+      openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 200,
+        temperature: 0.5
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 45 seconds')), 45000)
+      )
+    ]) as any;
+
+    const explanation = completion.choices?.[0]?.message?.content?.trim();
+    if (!explanation) {
+      throw new Error('No explanation returned from AI');
+    }
+
+    await cacheRef.set({
+      kidRecipeId,
+      stepIndex,
+      explanation,
+      parentId: kidRecipe.parentId || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { explanation, cached: false };
+  } catch (error) {
+    console.error('Error explaining recipe step:', error);
+
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+
+    throw new functions.https.HttpsError('internal', 'Failed to explain recipe step');
+  }
+});
+
+/**
+ * Cloud Function: Explain Parent Recipe Step
+ * Provides AI-generated explanations for parent recipe steps with global caching
+ */
+export const explainParentRecipeStep = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
+  recipeId: string;
+  stepIndex: number;
+  stepText: string;
+}, context) => {
+  // 1. Auth check
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be authenticated');
+  }
+
+  const { recipeId, stepIndex, stepText } = data;
+
+  // 2. Validate inputs
+  if (!recipeId || typeof stepIndex !== 'number' || !stepText) {
+    throw new functions.https.HttpsError('invalid-argument', 'Missing required parameters');
+  }
+
+  try {
+    // 3. Check global cache FIRST
+    const cacheId = `${recipeId}_${stepIndex}`;
+    const cacheRef = admin.firestore().collection('parentStepExplanations').doc(cacheId);
+    const cacheDoc = await cacheRef.get();
+
+    if (cacheDoc.exists) {
+      const cached = cacheDoc.data();
+      if (cached?.explanation) {
+        // Track usage
+        await cacheRef.update({
+          usageCount: admin.firestore.FieldValue.increment(1),
+          lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return { explanation: cached.explanation, cached: true };
+      }
+    }
+
+    // 4. Verify recipe ownership
+    const recipeDoc = await admin.firestore().collection('recipes').doc(recipeId).get();
+    if (!recipeDoc.exists) {
+      throw new functions.https.HttpsError('not-found', 'Recipe not found');
+    }
+    const recipe = recipeDoc.data();
+    if (!(await isUserOwnerOfParentProfile(context.auth.uid, recipe?.parentId))) {
+      throw new functions.https.HttpsError('permission-denied', 'Not authorized');
+    }
+
+    // 5. Generate with AI
+    const apiKey = functions.config().openai?.api_key || process.env.OPENAI_API_KEY;
+    if (!apiKey || !openai) {
+      throw new functions.https.HttpsError('failed-precondition', 'AI service unavailable');
+    }
+
+    const prompt = `You are helping an adult cook a recipe they may be unfamiliar with.
+
+Explain this cooking step clearly and concisely.
+
+Include:
+1. What to do (clear technique explanation)
+2. Why this step matters (the purpose/science)
+3. Common mistakes to avoid
+4. Safety tips (if applicable)
+
+Keep it under 150 words. Use professional but friendly language.
+
+Step:
+"${stepText}"`;
+
+    const completion = await Promise.race([
+      openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 250,
+        temperature: 0.6,
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), 45000)
+      ),
+    ]) as any;
+
+    const explanation = completion.choices?.[0]?.message?.content?.trim();
+    if (!explanation) {
+      throw new Error('No explanation returned');
+    }
+
+    // 6. Cache globally for ALL users
+    await cacheRef.set({
+      recipeId,
+      stepIndex,
+      stepText,
+      explanation,
+      usageCount: 1,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUsedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return { explanation, cached: false };
+  } catch (error) {
+    console.error('Error explaining parent step:', error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
+    throw new functions.https.HttpsError('internal', 'Failed to explain step');
   }
 });
 
@@ -4179,7 +4467,7 @@ Respond with only the improved step text, nothing else.
   }
 }
 
-export const getQualityAnalytics = functions.https.onCall(async (data: {
+export const getQualityAnalytics = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
   parentId?: string;
   timeRange?: 'week' | 'month' | 'quarter' | 'year';
 }, context) => {
@@ -4485,7 +4773,7 @@ export const triggerQualityAutoRegeneration = functions.pubsub.schedule('0 2 * *
 });
 
 // Delete a kid recipe and all associated data
-export const deleteKidRecipe = functions.https.onCall(async (data: {
+export const deleteKidRecipe = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data: {
   kidRecipeId: string;
 }, context) => {
   try {
@@ -4708,7 +4996,7 @@ interface ErrorReport {
 }
 
 // Error reporting Cloud Function
-export const reportError = functions.https.onCall(async (data, context) => {
+export const reportError = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
@@ -4797,7 +5085,7 @@ export const reportError = functions.https.onCall(async (data, context) => {
 // Analytics Cloud Functions for Beta Testing
 
 // Track user sessions for behavior analytics
-export const trackUserSession = functions.https.onCall(async (data, context) => {
+export const trackUserSession = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -4842,7 +5130,7 @@ export const trackUserSession = functions.https.onCall(async (data, context) => 
 });
 
 // Track performance metrics
-export const trackPerformanceMetrics = functions.https.onCall(async (data, context) => {
+export const trackPerformanceMetrics = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -4885,7 +5173,7 @@ export const trackPerformanceMetrics = functions.https.onCall(async (data, conte
 });
 
 // Track feature usage
-export const trackFeatureUsage = functions.https.onCall(async (data, context) => {
+export const trackFeatureUsage = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -4926,7 +5214,7 @@ export const trackFeatureUsage = functions.https.onCall(async (data, context) =>
 });
 
 // Generic analytics event tracking
-export const trackAnalyticsEvent = functions.https.onCall(async (data, context) => {
+export const trackAnalyticsEvent = functions.runWith({ enforceAppCheck: shouldEnforceAppCheck() }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
   }
@@ -4972,7 +5260,8 @@ import { runScraperTests } from './test/scraperTestHarness';
 // Scraper test harness for bulk testing (admin only)
 export const testScraperHarness = functions.runWith({
   timeoutSeconds: 540, // 9 minutes - testing many URLs takes time
-  memory: '1GB'
+  memory: '1GB',
+  enforceAppCheck: shouldEnforceAppCheck()
 }).https.onRequest(async (req, res) => {
   try {
     // This is an admin/development endpoint - add authentication check in production

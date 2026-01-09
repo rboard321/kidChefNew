@@ -1,9 +1,9 @@
 import { httpsCallable } from 'firebase/functions';
-import { functions } from './firebase';
-import { auth } from './firebase';
+import { auth, functions } from './firebase';
 import * as Device from 'expo-device';
 import * as Application from 'expo-application';
 import { Platform } from 'react-native';
+import { logger } from '../utils/logger';
 
 // Analytics interfaces
 export interface UserSession {
@@ -78,7 +78,7 @@ class AnalyticsService {
       };
 
       if (__DEV__) {
-        console.log(`📊 Analytics session started: ${this.currentSession.sessionId}`);
+        logger.debug(`📊 Analytics session started: ${this.currentSession.sessionId}`);
       }
     } catch (error) {
       console.warn('Failed to initialize analytics session:', error);
@@ -262,7 +262,7 @@ class AnalyticsService {
       this.sendUserSession(this.currentSession);
 
       if (__DEV__) {
-        console.log(`📊 Analytics session ended: ${this.currentSession.sessionId}`);
+        logger.debug(`📊 Analytics session ended: ${this.currentSession.sessionId}`);
       }
 
       this.currentSession = null;
@@ -286,7 +286,7 @@ class AnalyticsService {
       await batchTrackFunction({ events });
 
       if (__DEV__) {
-        console.log(`📊 Sent ${events.length} analytics events`);
+        logger.debug(`📊 Sent ${events.length} analytics events`);
       }
 
     } catch (error) {
@@ -308,6 +308,9 @@ class AnalyticsService {
 
   private async sendPerformanceMetric(metric: any) {
     try {
+      if (!auth.currentUser) {
+        return;
+      }
       const trackPerformanceFunction = httpsCallable(functions, 'trackPerformanceMetrics');
       await trackPerformanceFunction(metric);
     } catch (error) {
@@ -317,6 +320,9 @@ class AnalyticsService {
 
   private async sendFeatureUsage(usage: any) {
     try {
+      if (!auth.currentUser) {
+        return;
+      }
       const trackFeatureFunction = httpsCallable(functions, 'trackFeatureUsage');
       await trackFeatureFunction(usage);
     } catch (error) {
@@ -366,7 +372,7 @@ export const initializeAnalytics = () => {
   trackPerformance('app_startup', startupTime);
 
   if (__DEV__) {
-    console.log('📊 Analytics service initialized');
+    logger.debug('📊 Analytics service initialized');
   }
 };
 

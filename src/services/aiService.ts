@@ -1,9 +1,24 @@
-import type { Recipe, KidRecipe, ReadingLevel, KidIngredient, KidStep } from '../types';
+import type { Recipe, ReadingLevel, KidIngredient, KidStep } from '../types';
 import { httpsCallable } from 'firebase/functions';
-import { functions } from './firebase';
+import { auth, functions } from './firebase';
+import { logger } from '../utils/logger';
+import { waitForCallableReady } from '../utils/callableReady';
 
 export interface AIService {
   convertToKidFriendly: (recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number, allergyFlags?: string[]) => Promise<ConversionResult>;
+}
+
+export interface ConversionResult {
+  parentId?: string;
+  kidId?: string;
+  kidAge: number;
+  targetReadingLevel: ReadingLevel;
+  simplifiedIngredients: KidIngredient[];
+  simplifiedSteps: KidStep[];
+  safetyNotes: string[];
+  estimatedDuration?: number;
+  skillsRequired?: string[];
+  conversionSource?: 'ai' | 'mock';
 }
 
 interface KidFriendlyConversionRequest {
@@ -23,7 +38,7 @@ export const aiService: AIService = {
       // OpenAI API keys are protected on the server-side
 
       if (__DEV__) {
-        console.log('🚀 Calling Cloud Function for AI conversion:', {
+        logger.debug('🚀 Calling Cloud Function for AI conversion:', {
           recipeId: recipe.id,
           readingLevel,
           kidAge: kidAge || getAgeFromLevel(readingLevel)
@@ -31,6 +46,11 @@ export const aiService: AIService = {
       }
 
       // Call the Cloud Function for AI recipe conversion
+      await waitForCallableReady();
+      if (!auth.currentUser) {
+        throw new Error('Please log in again to use AI recipe conversion.');
+      }
+      await auth.currentUser.getIdToken(true);
       const convertRecipeForKid = httpsCallable(functions, 'convertRecipeForKid');
 
       const response = await convertRecipeForKid({
@@ -43,7 +63,7 @@ export const aiService: AIService = {
       const kidRecipeData = response.data as any;
 
       if (__DEV__) {
-        console.log('✅ Cloud Function response received:', {
+        logger.debug('✅ Cloud Function response received:', {
           success: !!kidRecipeData?.kidRecipeId,
           hasSteps: kidRecipeData?.simplifiedSteps?.length > 0,
           hasIngredients: kidRecipeData?.simplifiedIngredients?.length > 0
@@ -56,7 +76,6 @@ export const aiService: AIService = {
 
       // Transform the Cloud Function response to match our ConversionResult interface
       const result: ConversionResult = {
-        userId: recipe.userId || '',
         parentId: kidRecipeData.parentId,
         kidId: kidRecipeData.kidId,
         kidAge: kidRecipeData.kidAge || kidAge || getAgeFromLevel(readingLevel),
@@ -71,7 +90,7 @@ export const aiService: AIService = {
 
       return result;
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('💥 AI conversion failed:', error);
 
       // Check if it's a rate limit error
@@ -114,7 +133,7 @@ function getAgeFromLevel(level: ReadingLevel): number {
 // All AI conversion logic has been moved to Cloud Functions to protect API keys
 
 // Enhanced mock implementation with better logic
-async function enhancedMockConversion(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number): Promise<Omit<KidRecipe, 'id' | 'originalRecipeId' | 'createdAt'>> {
+async function enhancedMockConversion(recipe: Recipe, readingLevel: ReadingLevel, kidAge?: number): Promise<ConversionResult> {
   // Simulate API delay
   await new Promise(resolve => setTimeout(resolve, 2000));
 
@@ -132,7 +151,6 @@ async function enhancedMockConversion(recipe: Recipe, readingLevel: ReadingLevel
   const safetyNotes = generateSafetyNotes(recipe, readingLevel);
 
   return {
-    userId: recipe.userId || '',
     kidAge: kidAge ?? getAgeFromLevel(readingLevel),
     targetReadingLevel: readingLevel,
     simplifiedIngredients,

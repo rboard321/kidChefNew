@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { User } from 'firebase/auth';
 import { authService } from '../services/auth';
@@ -6,13 +6,15 @@ import { authErrorHandler, authOperationManager } from '../services/authErrorHan
 import { parentProfileService } from '../services/parentProfile';
 import { kidProfileService } from '../services/kidProfile';
 import { hashPin, verifyPin, validatePinFormat } from '../utils/pinSecurity';
-import { useSessionTimeout } from '../hooks/useSessionTimeout';
 import { sendAccountCreationNotice, sendKidProfileNotice } from '../services/parentalNotice';
 import { onSnapshot, doc } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
-import type { ParentProfile, KidProfile } from '../types';
+import type { ParentProfile, KidProfile, SubscriptionData, SubscriptionPlan, FeatureKey } from '../types';
 import { clearSharedAuthToken, setSharedAuthToken } from '../utils/sharedAuthToken';
+import * as subscriptionService from '../services/subscriptionService';
+import { canAccessFeature, hasValidSubscription as checkValidSubscription, getEffectivePlan } from '../services/featureGate';
+import { logger } from '../utils/logger';
 
 interface AuthContextType {
   user: User | null;
@@ -26,6 +28,12 @@ interface AuthContextType {
     coppaDisclosureAccepted: boolean;
   } | null;
   loading: boolean;
+  requiresEmailVerification: boolean;
+
+  // Subscription state
+  subscription: SubscriptionData | null;
+  effectivePlan: SubscriptionPlan;
+
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signUp: (email: string, password: string, profile: Partial<ParentProfile>) => Promise<void>;
@@ -42,11 +50,16 @@ interface AuthContextType {
   setKidModePin: (pin: string) => Promise<void>;
   changePIN: (newPin: string) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  refreshEmailVerification: () => Promise<boolean>;
   addKid: (kidData: Omit<KidProfile, 'id' | 'parentId' | 'createdAt' | 'updatedAt'>) => Promise<string>;
   updateKid: (kidId: string, updates: Partial<KidProfile>) => Promise<void>;
   removeKid: (kidId: string) => Promise<void>;
   checkAndRunMigration: () => Promise<boolean>;
-  trackActivity: () => void;
+
+  // Subscription methods
+  canAccessFeatureHelper: (feature: FeatureKey) => boolean;
+  hasValidSubscription: () => boolean;
+  refreshSubscription: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -66,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentKid, setCurrentKid] = useState<KidProfile | null>(null);
   const [deviceMode, setDeviceMode] = useState<'parent' | 'kid'>('parent');
   const [loading, setLoading] = useState(true);
+  const [requiresEmailVerification, setRequiresEmailVerification] = useState(false);
   const [legalAcceptance, setLegalAcceptanceState] = useState<{
     termsAcceptedAt: Date;
     privacyPolicyAcceptedAt: Date;
@@ -73,15 +87,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   } | null>(null);
   const legalAcceptanceStorageKey = 'kidchef.legalAcceptance';
 
-  // Session timeout hook for automatic logout after inactivity
-  const { trackActivity, clearSession } = useSessionTimeout({
-    timeoutDuration: 15 * 60 * 1000, // 15 minutes
-    onTimeout: async () => {
-      console.log('⏰ Session timeout - signing out user');
-      await signOut();
-    },
-    enabled: !!user,
-  });
+  // Subscription state
+  const [subscription, setSubscription] = useState<SubscriptionData | null>(null);
+  const [effectivePlan, setEffectivePlan] = useState<SubscriptionPlan>('free');
 
   useEffect(() => {
     const loadAcceptance = async () => {
@@ -132,20 +140,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const loadUserProfile = async (user: User) => {
     try {
-      console.log('🔄 Loading user profile for UID:', user.uid);
+      logger.debug('🔄 Loading user profile for UID:', user.uid);
       // Load parent profile
       const parent = await parentProfileService.getParentProfile(user.uid);
-      console.log('👨‍👩‍👧‍👦 Parent profile loaded:', parent ? { id: parent.id, parentName: parent.parentName, familyName: parent.familyName } : 'null');
+      logger.debug('👨‍👩‍👧‍👦 Parent profile loaded:', parent ? { id: parent.id, parentName: parent.parentName, familyName: parent.familyName } : 'null');
       setParentProfile(parent);
 
       // Load kids if parent profile exists
       if (parent) {
         const kids = await kidProfileService.getParentKids(parent.id);
-        console.log('👶 Kids loaded:', kids.length);
+        logger.debug('👶 Kids loaded:', kids.length);
         setKidProfiles(kids);
+
+        // Load subscription
+        const sub = await subscriptionService.getSubscription(parent.id);
+        logger.debug('💳 Subscription loaded:', sub ? { plan: sub.plan, status: sub.status, isBetaTester: sub.isBetaTester } : 'null');
+        setSubscription(sub);
+        setEffectivePlan(getEffectivePlan(sub));
       } else {
         setKidProfiles([]);
         setCurrentKid(null);
+        setSubscription(null);
+        setEffectivePlan('free');
       }
     } catch (error) {
       console.error('Error loading user profile:', error);
@@ -159,24 +175,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshEmailVerification = async () => {
+    if (!user) return false;
+    const isVerified = await authService.checkEmailVerification(user);
+    if (isVerified) {
+      setRequiresEmailVerification(false);
+      await loadUserProfile(user);
+    }
+    return isVerified;
+  };
+
   useEffect(() => {
     const unsubscribe = authService.onAuthStateChanged(async (user) => {
       setUser(user);
 
       if (user) {
+        if (!user.emailVerified) {
+          setRequiresEmailVerification(true);
+          setParentProfile(null);
+          setKidProfiles([]);
+          setCurrentKid(null);
+          setSubscription(null);
+          setEffectivePlan('free');
+          setLoading(false);
+          return;
+        }
+
+        setRequiresEmailVerification(false);
+        // Store auth token (non-blocking)
         user.getIdToken().then(setSharedAuthToken).catch((error) => {
           console.error('Failed to store shared auth token:', error);
         });
-        setLoading(false);
-        loadUserProfile(user).catch((error) => {
+
+        // Load user profile before marking as loaded
+        try {
+          await loadUserProfile(user);
+        } catch (error) {
           console.error('Error loading user profile:', error);
-        });
+        }
+
+        // Now we're ready to show the app
+        setLoading(false);
       } else {
         clearSharedAuthToken();
         setParentProfile(null);
         setKidProfiles([]);
         setCurrentKid(null);
         setDeviceMode('parent');
+        setRequiresEmailVerification(false);
         setLoading(false);
       }
     });
@@ -240,7 +286,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           doc(db, 'parentProfiles', parentProfile.id),
           async (docSnapshot) => {
             if (docSnapshot.exists()) {
-              console.log('📱 Parent profile updated from another device, refreshing...');
+              logger.debug('📱 Parent profile updated from another device, refreshing...');
               await loadUserProfile(user);
             }
           },
@@ -265,7 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-      console.log('🔐 Starting sign-in process for email:', email);
+      logger.debug('🔐 Starting sign-in process for email:', email);
 
       // Use enhanced auth operation manager for automatic retry
       const user = await authOperationManager.executeWithRetry(
@@ -274,7 +320,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'SignIn'
       );
 
-      console.log('✅ Sign-in successful, checking email verification status:', {
+      logger.debug('✅ Sign-in successful, checking email verification status:', {
         uid: user.uid,
         email: user.email,
         emailVerified: user.emailVerified,
@@ -288,7 +334,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'EmailVerification'
       );
 
-      console.log('📧 Email verification check result:', {
+      logger.debug('📧 Email verification check result:', {
         isVerified,
         userEmailVerified: user.emailVerified,
         timestamp: new Date().toISOString()
@@ -301,7 +347,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Please verify your email address before signing in. Check your email for the verification link.');
       }
 
-      console.log('✅ Email verification successful, continuing with sign-in');
+      logger.debug('✅ Email verification successful, continuing with sign-in');
     } catch (error) {
       console.error('❌ Sign-in failed:', {
         error: error instanceof Error ? error.message : error,
@@ -338,7 +384,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           user.displayName || 'Parent',
           user.email || email
         );
-        console.log('Account creation notice sent successfully');
+        logger.debug('Account creation notice sent successfully');
       } catch (noticeError) {
         console.error('Error sending account creation notice:', noticeError);
         // Don't fail signup if notice fails, but log it for follow-up
@@ -370,8 +416,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      // Clear session timeout data before signing out
-      clearSession();
       await authService.signOut();
     } catch (error) {
       console.error('Error signing out:', error);
@@ -403,7 +447,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         targetParent = await parentProfileService.getParentProfile(user.uid);
       }
 
-      if (!parentProfile) throw new Error('No parent profile found');
+      if (!targetParent) throw new Error('No parent profile found');
 
       // Validate PIN format
       if (!validatePinFormat(pin)) {
@@ -411,9 +455,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Hash the PIN before storing
-      console.log('📝 Setting new PIN for parent profile:', parentProfile.id);
+      logger.debug('📝 Setting new PIN for parent profile:', targetParent.id);
       const hashedPin = await hashPin(pin);
-      console.log('📝 About to store hashed PIN:', hashedPin.substring(0, 20) + '...');
+      logger.debug('📝 About to store hashed PIN:', hashedPin.substring(0, 20) + '...');
 
       // Store the HASHED PIN, not the plain text
       await parentProfileService.updateParentProfile(targetParent.id, { kidModePin: hashedPin });
@@ -500,7 +544,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Create parent profile if it doesn't exist
     if (!parentProfile) {
-      console.log('No parent profile found, creating one...');
+      logger.debug('No parent profile found, creating one...');
       const defaultParentData = {
         familyName: `${user.email?.split('@')[0] || 'Family'}'s Family`,
         parentName: user.displayName || user.email?.split('@')[0] || 'Parent',
@@ -524,7 +568,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       const parentId = await parentProfileService.createParentProfile(user.uid, defaultParentData);
-      console.log('Parent profile created with ID:', parentId);
+      logger.debug('Parent profile created with ID:', parentId);
 
       // Refresh to load the new parent profile
       await refreshProfile();
@@ -536,20 +580,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      console.log('👶 Starting kid profile creation:', {
+      logger.debug('👶 Starting kid profile creation:', {
         parentId: parentProfile.id,
         kidData: { name: kidData.name, age: kidData.age, readingLevel: kidData.readingLevel },
         timestamp: new Date().toISOString()
       });
 
       const kidId = await kidProfileService.createKidProfile(parentProfile.id, kidData);
-      console.log('✅ Kid profile created with ID:', kidId);
+      logger.debug('✅ Kid profile created with ID:', kidId);
 
       await parentProfileService.addKidToParent(parentProfile.id, kidId);
-      console.log('✅ Kid ID added to parent profile');
+      logger.debug('✅ Kid ID added to parent profile');
 
       await refreshProfile();
-      console.log('✅ Profile refreshed after kid addition');
+      logger.debug('✅ Profile refreshed after kid addition');
 
       // Send COPPA-required kid profile creation notice
       try {
@@ -559,17 +603,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           readingLevel: kidData.readingLevel,
           allergies: kidData.allergyFlags || [],
         });
-        console.log('✅ Kid profile creation notice sent successfully');
+        logger.debug('✅ Kid profile creation notice sent successfully');
       } catch (noticeError) {
         console.error('⚠️ Error sending kid profile notice:', noticeError);
         // Don't fail kid creation if notice fails, but log it
       }
 
-      console.log('✅ Kid creation completed successfully');
+      logger.debug('✅ Kid creation completed successfully');
       return kidId;
     } catch (error) {
       console.error('❌ Error adding kid:', {
-        error: error?.message || error,
+        error: getErrorMessage(error),
         parentId: parentProfile.id,
         kidData: { name: kidData.name, age: kidData.age },
         timestamp: new Date().toISOString()
@@ -592,7 +636,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!parentProfile) throw new Error('No parent profile found');
 
     try {
-      console.log('🗑️ Starting kid profile removal:', {
+      logger.debug('🗑️ Starting kid profile removal:', {
         kidId,
         parentId: parentProfile.id,
         currentKidIds: parentProfile.kidIds,
@@ -600,22 +644,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       await kidProfileService.deleteKidProfile(kidId);
-      console.log('✅ Kid profile deleted from kidProfiles collection');
+      logger.debug('✅ Kid profile deleted from kidProfiles collection');
 
       await parentProfileService.removeKidFromParent(parentProfile.id, kidId);
-      console.log('✅ Kid ID removed from parent profile');
+      logger.debug('✅ Kid ID removed from parent profile');
 
       // Clear current kid if it was the one being removed
       if (currentKid?.id === kidId) {
-        console.log('🧹 Clearing current kid since it was the one removed');
+        logger.debug('🧹 Clearing current kid since it was the one removed');
         setCurrentKid(null);
       }
 
       await refreshProfile();
-      console.log('✅ Kid removal completed successfully');
+      logger.debug('✅ Kid removal completed successfully');
     } catch (error) {
       console.error('❌ Error removing kid:', {
-        error: error?.message || error,
+        error: getErrorMessage(error),
         kidId,
         parentId: parentProfile.id,
         timestamp: new Date().toISOString()
@@ -630,6 +674,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   };
 
+  // Subscription helper methods
+  const canAccessFeatureHelper = (feature: FeatureKey): boolean => {
+    return canAccessFeature(feature, parentProfile, subscription);
+  };
+
+  const hasValidSubscriptionHelper = (): boolean => {
+    return checkValidSubscription(subscription);
+  };
+
+  const refreshSubscription = async () => {
+    if (!parentProfile) return;
+
+    try {
+      const sub = await subscriptionService.getSubscription(parentProfile.id);
+      logger.debug('💳 Subscription refreshed:', sub ? { plan: sub.plan, status: sub.status } : 'null');
+      setSubscription(sub);
+      setEffectivePlan(getEffectivePlan(sub));
+    } catch (error) {
+      console.error('Error refreshing subscription:', error);
+    }
+  };
+
   const value: AuthContextType = {
     user,
     parentProfile,
@@ -638,7 +704,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     deviceMode,
     legalAcceptance,
     loading,
+    requiresEmailVerification,
+    subscription,
+    effectivePlan,
     signIn,
+    signInWithGoogle,
     signUp,
     signOut,
     setLegalAcceptance,
@@ -654,11 +724,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setKidModePin,
     changePIN,
     refreshProfile,
+    refreshEmailVerification,
     addKid,
     updateKid,
     removeKid,
     checkAndRunMigration,
-    trackActivity,
+    canAccessFeatureHelper,
+    hasValidSubscription: hasValidSubscriptionHelper,
+    refreshSubscription,
   };
 
   return (
@@ -669,3 +742,5 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 export { AuthContext };
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : String(error);

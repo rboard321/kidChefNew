@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   initializeAppCheck,
   ReCaptchaEnterpriseProvider,
@@ -13,6 +14,18 @@ let appCheck: any = null;
 
 // Native App Check provider using device attestation simulation
 const createNativeAppCheckProvider = () => {
+  const envInfo = getEnvironmentInfo();
+  const debugToken = process.env.EXPO_PUBLIC_APP_CHECK_DEBUG_TOKEN;
+
+  if (envInfo.isStaging && debugToken) {
+    return new CustomProvider({
+      getToken: () => Promise.resolve({
+        token: debugToken,
+        expireTimeMillis: Date.now() + (60 * 60 * 1000)
+      })
+    });
+  }
+
   return new CustomProvider({
     getToken: () => {
       // For React Native, we create a custom token based on device characteristics
@@ -55,18 +68,21 @@ export const initializeFirebaseAppCheck = () => {
     if (Platform.OS !== 'web') {
       // Native platforms: Use custom provider for device attestation
       if (envInfo.isProd || envInfo.isStaging) {
+        if (envInfo.isStaging && !process.env.EXPO_PUBLIC_APP_CHECK_DEBUG_TOKEN) {
+          console.warn('⚠️ Missing EXPO_PUBLIC_APP_CHECK_DEBUG_TOKEN for staging - App Check may fail');
+        }
         appCheck = initializeAppCheck(app, {
           provider: createNativeAppCheckProvider(),
           isTokenAutoRefreshEnabled: true
         });
 
         if (__DEV__) {
-          console.log(`🔒 Firebase App Check initialized with custom native provider (${envInfo.environment})`);
+          logger.debug(`🔒 Firebase App Check initialized with custom native provider (${envInfo.environment})`);
         }
       } else {
         // Development: Use debug provider or disable App Check
         if (__DEV__) {
-          console.log('🔓 Firebase App Check disabled in development (native platform)');
+          logger.debug('🔓 Firebase App Check disabled in development (native platform)');
         }
         return null;
       }
@@ -85,7 +101,7 @@ export const initializeFirebaseAppCheck = () => {
         });
 
         if (__DEV__) {
-          console.log('🔒 Firebase App Check initialized with reCAPTCHA Enterprise (Production)');
+          logger.debug('🔒 Firebase App Check initialized with reCAPTCHA Enterprise (Production)');
         }
       } else if (envInfo.isStaging) {
         // Staging: Use reCAPTCHA v3 for realistic testing
@@ -101,12 +117,12 @@ export const initializeFirebaseAppCheck = () => {
         });
 
         if (__DEV__) {
-          console.log('🔒 Firebase App Check initialized with reCAPTCHA v3 (Staging)');
+          logger.debug('🔒 Firebase App Check initialized with reCAPTCHA v3 (Staging)');
         }
       } else {
         // Development: Skip App Check to avoid blocking development
         if (__DEV__) {
-          console.log('🔓 Firebase App Check disabled in development environment');
+          logger.debug('🔓 Firebase App Check disabled in development environment');
         }
         return null;
       }
@@ -116,7 +132,7 @@ export const initializeFirebaseAppCheck = () => {
     if (__DEV__ && appCheck) {
       getToken(appCheck)
         .then((token) => {
-          console.log('✅ App Check token generated successfully:', token.token.substring(0, 20) + '...');
+          logger.debug('✅ App Check token generated successfully:', token.token.substring(0, 20) + '...');
         })
         .catch((error) => {
           console.warn('⚠️ App Check token generation failed:', error.message);
@@ -140,7 +156,7 @@ export const initializeFirebaseAppCheck = () => {
 export const getAppCheckToken = async (): Promise<string | null> => {
   if (!appCheck) {
     if (__DEV__) {
-      console.log('App Check not initialized, returning null token');
+      logger.debug('App Check not initialized, returning null token');
     }
     return null;
   }

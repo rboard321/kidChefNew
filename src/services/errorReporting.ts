@@ -6,6 +6,7 @@ import * as Application from 'expo-application';
 import { Platform, Dimensions } from 'react-native';
 // Import analytics for performance tracking
 import { trackPerformance, trackCustomEvent } from './analyticsService';
+import { logger } from '../utils/logger';
 
 export interface ErrorReport {
   id: string;
@@ -244,7 +245,7 @@ class ErrorReportingService {
     try {
       // In a real implementation, this would use AsyncStorage
       // For now, just keep in memory
-      console.log(`Storing ${this.pendingReports.length} pending error reports`);
+      logger.debug(`Storing ${this.pendingReports.length} pending error reports`);
     } catch (error) {
       console.error('Failed to save pending reports:', error);
     }
@@ -287,7 +288,7 @@ class ErrorReportingService {
           sentReports.push(report.id);
 
           if (__DEV__) {
-            console.log(`✅ Error report sent successfully: ${result.data.errorId}`);
+            logger.debug(`✅ Error report sent successfully: ${result.data.errorId}`);
           }
 
         } catch (sendError: any) {
@@ -308,7 +309,7 @@ class ErrorReportingService {
       this.savePendingReports();
 
       if (__DEV__ && sentReports.length > 0) {
-        console.log(`📊 Successfully sent ${sentReports.length}/${reportsToSend.length} error reports`);
+        logger.debug(`📊 Successfully sent ${sentReports.length}/${reportsToSend.length} error reports`);
       }
 
     } catch (error) {

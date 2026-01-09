@@ -63,7 +63,7 @@ export default function KidRecipePreviewScreen() {
       setLoading(true);
 
       // Fetch kid recipe
-      const kidRecipeData = await kidRecipeManagerService.getKidRecipeById(kidRecipeId);
+      const kidRecipeData = await kidRecipeManagerService.getKidRecipe(kidRecipeId);
       if (!kidRecipeData) {
         Alert.alert('Error', 'Recipe not found.');
         navigation.goBack();

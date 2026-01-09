@@ -1,4 +1,5 @@
 import { ImportResult, ImportStatus, PartialRecipeData } from '../services/recipeImport';
+import { logger } from './logger';
 
 export interface TestScenario {
   name: string;
@@ -303,12 +304,12 @@ export class TestScenarioRunner {
 
   async runScenario(scenario: TestScenario): Promise<ImportResult> {
     if (this.mockMode) {
-      console.log(`🧪 MOCK MODE: Simulating "${scenario.name}" scenario`);
-      console.log(`📝 Description: ${scenario.description}`);
-      console.log(`⏱️ Target completion time: ${scenario.timerTarget}s`);
-      console.log(`📋 Instructions:`);
+      logger.debug(`🧪 MOCK MODE: Simulating "${scenario.name}" scenario`);
+      logger.debug(`📝 Description: ${scenario.description}`);
+      logger.debug(`⏱️ Target completion time: ${scenario.timerTarget}s`);
+      logger.debug(`📋 Instructions:`);
       scenario.testInstructions.forEach(instruction => {
-        console.log(`   ${instruction}`);
+        logger.debug(`   ${instruction}`);
       });
 
       // Simulate some delay

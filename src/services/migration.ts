@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -11,7 +12,7 @@ import {
 import { db } from './firebase';
 import { parentProfileService } from './parentProfile';
 import { kidProfileService } from './kidProfile';
-import type { UserProfile, ParentProfile, KidProfile, UserSettings } from '../types';
+import type { ParentProfile, KidProfile, UserSettings } from '../types';
 
 export interface MigrationService {
   checkMigrationNeeded: (userId: string) => Promise<boolean>;
@@ -86,7 +87,7 @@ export const migrationService: MigrationService = {
       }
 
       const legacyDoc = legacySnapshot.docs[0];
-      const legacyData = legacyDoc.data() as UserProfile;
+      const legacyData = legacyDoc.data() as any; // Legacy user profile format
 
       const parentProfileData = {
         familyName: `${legacyData.parentName}'s Family`,
@@ -142,7 +143,7 @@ export const migrationService: MigrationService = {
 
       await batch.commit();
 
-      console.log('Migration completed successfully', { parentId, kidId });
+      logger.debug('Migration completed successfully', { parentId, kidId });
       return { parentId, kidId };
 
     } catch (error) {
@@ -199,7 +200,7 @@ export const migrationService: MigrationService = {
 
       await batch.commit();
 
-      console.log('Migration rollback completed successfully');
+      logger.debug('Migration rollback completed successfully');
     } catch (error) {
       console.error('Error during migration rollback:', error);
       throw error;

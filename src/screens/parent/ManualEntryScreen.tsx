@@ -153,10 +153,10 @@ export const ManualEntryScreen: React.FC = () => {
     return '🍽️';
   };
 
-  const inferDifficulty = (instructionCount: number, ingredientCount: number): string => {
-    if (instructionCount <= 5 && ingredientCount <= 8) return 'Easy';
-    if (instructionCount <= 10 && ingredientCount <= 15) return 'Medium';
-    return 'Hard';
+  const inferDifficulty = (instructionCount: number, ingredientCount: number): 'easy' | 'medium' | 'hard' => {
+    if (instructionCount <= 5 && ingredientCount <= 8) return 'easy';
+    if (instructionCount <= 10 && ingredientCount <= 15) return 'medium';
+    return 'hard';
   };
 
   return (

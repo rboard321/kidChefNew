@@ -1,6 +1,7 @@
 import * as Linking from 'expo-linking';
 import { NavigationContainerRef } from '@react-navigation/native';
 import { recipeImportService } from './recipeImport';
+import { logger } from '../utils/logger';
 
 class DeepLinkService {
   private navigationRef: React.RefObject<NavigationContainerRef<any>> | null = null;
@@ -25,7 +26,7 @@ class DeepLinkService {
 
   private async handleDeepLink(url: string) {
     try {
-      console.log('Handling deep link:', url);
+      logger.debug('Handling deep link:', url);
 
       const parsed = Linking.parse(url);
 

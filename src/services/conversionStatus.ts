@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -141,6 +142,9 @@ class ConversionStatusManager implements ConversionStatusService {
   }
 
   private async startConversion(taskId: string): Promise<void> {
+    // Declare task outside try block so it's accessible in catch block
+    let task: ConversionTaskStatus | null = null;
+
     try {
       // Update status to converting
       await updateDoc(doc(db, 'conversionTasks', taskId), {
@@ -150,7 +154,7 @@ class ConversionStatusManager implements ConversionStatusService {
       });
 
       // Get the task details
-      const task = await this.getConversionStatus(taskId);
+      task = await this.getConversionStatus(taskId);
       if (!task) {
         throw new Error('Task not found');
       }
@@ -403,7 +407,7 @@ class ConversionStatusManager implements ConversionStatusService {
       });
 
       await Promise.all(deletePromises);
-      console.log(`Cleaned up ${deletePromises.length} old conversion tasks`);
+      logger.debug(`Cleaned up ${deletePromises.length} old conversion tasks`);
     } catch (error) {
       console.error('Error cleaning up old tasks:', error);
       throw error;

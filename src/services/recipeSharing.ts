@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -9,70 +10,119 @@ import {
   getDoc,
   query,
   where,
+  orderBy,
   Timestamp
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import type { Recipe, KidProfile } from '../types';
+import type { Recipe } from '../types';
+
+// NOTE: This is a lightweight Recipe view built from SharedRecipe.
+// It is NOT a full Recipe document and should only be used for
+// display + recommendation scoring.
+export type SharedRecipeRecipeView = Pick<Recipe, 'id' | 'title' | 'image'>;
 
 export interface SharedRecipe {
   id: string;
   parentRecipeId: string;
   kidId: string;
+  // DO NOT add userId here – use parentId only
   parentId: string;
-  parentUserId: string; // Firebase Auth UID for direct permission checking
+  recipeTitle: string;
+  recipeImage?: string;
+  kidName: string;
+  kidAvatarEmoji?: string;
+  status: 'active' | 'archived' | 'deleted';
   sharedAt: Date;
   permissions: {
     canConvert: boolean;
-    canReconvert: boolean;
   };
+}
+
+export interface SharedKidAccess {
+  id: string;
+  name: string;
+  avatarEmoji?: string;
 }
 
 export interface RecipeSharingService {
   shareRecipeWithKid: (parentRecipeId: string, kidId: string, parentId: string) => Promise<void>;
-  unshareRecipeFromKid: (parentRecipeId: string, kidId: string) => Promise<void>;
-  getSharedRecipesForKid: (kidId: string) => Promise<Recipe[]>;
-  getKidsWithAccess: (parentRecipeId: string) => Promise<KidProfile[]>;
-  isRecipeSharedWithKid: (parentRecipeId: string, kidId: string) => Promise<boolean>;
+  unshareRecipeFromKid: (parentRecipeId: string, kidId: string, parentId: string) => Promise<void>;
+  getSharedRecipesForKid: (kidId: string, parentId: string) => Promise<SharedRecipeRecipeView[]>;
+  getKidsWithAccess: (parentRecipeId: string, parentId: string) => Promise<SharedKidAccess[]>;
+  isRecipeSharedWithKid: (parentRecipeId: string, kidId: string, parentId: string) => Promise<boolean>;
   shareRecipeWithAllKids: (parentRecipeId: string, parentId: string) => Promise<void>;
   getSharedRecipesByParent: (parentId: string) => Promise<SharedRecipe[]>;
 }
+
+export const buildSharedRecipeData = (
+  parentRecipeId: string,
+  kidId: string,
+  parentId: string,
+  recipeTitle: string,
+  recipeImage: string | undefined,
+  kidName: string,
+  kidAvatarEmoji: string | undefined
+) => ({
+  parentRecipeId,
+  kidId,
+  // DO NOT add userId here – parentId is the only ownership field
+  parentId,
+  recipeTitle,
+  recipeImage,
+  kidName,
+  kidAvatarEmoji,
+  status: 'active' as const,
+  sharedAt: Timestamp.now(),
+  permissions: {
+    canConvert: true,
+  },
+});
 
 export const recipeSharingService: RecipeSharingService = {
   async shareRecipeWithKid(parentRecipeId: string, kidId: string, parentId: string) {
     try {
       // Check if already shared
-      const isShared = await this.isRecipeSharedWithKid(parentRecipeId, kidId);
+      const isShared = await this.isRecipeSharedWithKid(parentRecipeId, kidId, parentId);
       if (isShared) {
         if (__DEV__) {
-          console.log('Recipe already shared with this kid');
+          logger.debug('Recipe already shared with this kid');
         }
         return;
       }
 
       // Verify auth state before creating shared recipe
-      const currentUserId = auth.currentUser?.uid;
-      if (!currentUserId) {
+      if (!auth.currentUser?.uid) {
         throw new Error('User must be authenticated to share recipes');
       }
 
-      const sharedRecipe = {
+      const recipeDoc = await getDoc(doc(db, 'recipes', parentRecipeId));
+      if (!recipeDoc.exists()) {
+        throw new Error('Recipe not found');
+      }
+
+      const kidDoc = await getDoc(doc(db, 'kidProfiles', kidId));
+      if (!kidDoc.exists()) {
+        throw new Error('Kid profile not found');
+      }
+
+      const recipeData = recipeDoc.data() as Recipe;
+      const kidData = kidDoc.data() as { name?: string; avatarEmoji?: string };
+
+      const sharedRecipe = buildSharedRecipeData(
         parentRecipeId,
         kidId,
         parentId,
-        parentUserId: currentUserId,
-        sharedAt: Timestamp.now(),
-        permissions: {
-          canConvert: true,
-          canReconvert: false, // Default: one-time conversion
-        },
-      };
+        recipeData.title || 'Untitled Recipe',
+        recipeData.image,
+        kidData.name || 'Kid',
+        kidData.avatarEmoji
+      );
 
       if (__DEV__) {
-        console.log('🔗 About to create shared recipe:', {
+        logger.debug('🔗 About to create shared recipe:', {
           parentRecipeId,
           kidId,
           parentId,
-          parentUserId: currentUserId,
           authUid: auth.currentUser?.uid
         });
       }
@@ -81,7 +131,7 @@ export const recipeSharingService: RecipeSharingService = {
       const sharedRecipeId = `${parentRecipeId}_${kidId}`;
       await setDoc(doc(db, 'sharedRecipes', sharedRecipeId), sharedRecipe);
       if (__DEV__) {
-        console.log('✅ Recipe shared successfully');
+        logger.debug('✅ Recipe shared successfully');
       }
     } catch (error) {
       console.error('❌ Error sharing recipe:', {
@@ -96,13 +146,13 @@ export const recipeSharingService: RecipeSharingService = {
     }
   },
 
-  async unshareRecipeFromKid(parentRecipeId: string, kidId: string) {
+  async unshareRecipeFromKid(parentRecipeId: string, kidId: string, parentId: string) {
     try {
       const q = query(
         collection(db, 'sharedRecipes'),
         where('parentRecipeId', '==', parentRecipeId),
         where('kidId', '==', kidId),
-        where('parentUserId', '==', auth.currentUser?.uid)
+        where('parentId', '==', parentId)
       );
 
       const querySnapshot = await getDocs(q);
@@ -112,7 +162,7 @@ export const recipeSharingService: RecipeSharingService = {
       }
 
       if (__DEV__) {
-        console.log('Recipe unshared successfully');
+        logger.debug('Recipe unshared successfully');
       }
     } catch (error) {
       console.error('Error unsharing recipe:', error);
@@ -120,39 +170,30 @@ export const recipeSharingService: RecipeSharingService = {
     }
   },
 
-  async getSharedRecipesForKid(kidId: string): Promise<Recipe[]> {
+  async getSharedRecipesForKid(kidId: string, parentId: string): Promise<SharedRecipeRecipeView[]> {
     try {
       // Get all shared recipe entries for this kid
       const q = query(
         collection(db, 'sharedRecipes'),
         where('kidId', '==', kidId),
-        where('parentUserId', '==', auth.currentUser?.uid)
+        where('parentId', '==', parentId),
+        orderBy('sharedAt', 'desc')
       );
 
       const sharedSnapshot = await getDocs(q);
-      // Deduplicate recipe IDs to handle any existing duplicate sharedRecipes
-      const recipeIds = [...new Set(sharedSnapshot.docs.map(doc => doc.data().parentRecipeId))];
-
-      if (recipeIds.length === 0) {
+      if (sharedSnapshot.empty) {
         return [];
       }
 
-      // Get the actual recipe data
-      const recipes: Recipe[] = [];
-      for (const recipeId of recipeIds) {
-        const recipeDoc = await getDoc(doc(db, 'recipes', recipeId));
-        if (recipeDoc.exists()) {
-          recipes.push({
-            id: recipeDoc.id,
-            ...recipeDoc.data(),
-          } as Recipe);
-        }
-      }
-
-      return recipes.sort((a, b) => {
-        const aTime = a.updatedAt ? (a.updatedAt instanceof Date ? a.updatedAt.getTime() : a.updatedAt.toMillis()) : 0;
-        const bTime = b.updatedAt ? (b.updatedAt instanceof Date ? b.updatedAt.getTime() : b.updatedAt.toMillis()) : 0;
-        return bTime - aTime;
+      return sharedSnapshot.docs.map((doc) => {
+        const data = doc.data() as SharedRecipe;
+        return {
+          id: data.parentRecipeId,
+          parentId: data.parentId,
+          title: data.recipeTitle,
+          image: data.recipeImage,
+          ingredients: [],
+        } as SharedRecipeRecipeView;
       });
     } catch (error) {
       console.error('Error getting shared recipes for kid:', error);
@@ -160,32 +201,27 @@ export const recipeSharingService: RecipeSharingService = {
     }
   },
 
-  async getKidsWithAccess(parentRecipeId: string): Promise<KidProfile[]> {
+  async getKidsWithAccess(parentRecipeId: string, parentId: string): Promise<SharedKidAccess[]> {
     try {
       const q = query(
         collection(db, 'sharedRecipes'),
         where('parentRecipeId', '==', parentRecipeId),
-        where('parentUserId', '==', auth.currentUser?.uid)
+        where('parentId', '==', parentId)
       );
 
       const sharedSnapshot = await getDocs(q);
-      const kidIds = sharedSnapshot.docs.map(doc => doc.data().kidId);
-
-      if (kidIds.length === 0) {
+      if (sharedSnapshot.empty) {
         return [];
       }
 
-      // Get the kid profiles
-      const kids: KidProfile[] = [];
-      for (const kidId of kidIds) {
-        const kidDoc = await getDoc(doc(db, 'kidProfiles', kidId));
-        if (kidDoc.exists()) {
-          kids.push({
-            id: kidDoc.id,
-            ...kidDoc.data(),
-          } as KidProfile);
-        }
-      }
+      const kids = sharedSnapshot.docs.map((doc) => {
+        const data = doc.data() as SharedRecipe;
+        return {
+          id: data.kidId,
+          name: data.kidName,
+          avatarEmoji: data.kidAvatarEmoji,
+        } as SharedKidAccess;
+      });
 
       return kids.sort((a, b) => a.name.localeCompare(b.name));
     } catch (error) {
@@ -194,13 +230,13 @@ export const recipeSharingService: RecipeSharingService = {
     }
   },
 
-  async isRecipeSharedWithKid(parentRecipeId: string, kidId: string): Promise<boolean> {
+  async isRecipeSharedWithKid(parentRecipeId: string, kidId: string, parentId: string): Promise<boolean> {
     try {
       const q = query(
         collection(db, 'sharedRecipes'),
         where('parentRecipeId', '==', parentRecipeId),
         where('kidId', '==', kidId),
-        where('parentUserId', '==', auth.currentUser?.uid)
+        where('parentId', '==', parentId)
       );
 
       const querySnapshot = await getDocs(q);
@@ -227,7 +263,7 @@ export const recipeSharingService: RecipeSharingService = {
       }
 
       if (__DEV__) {
-        console.log('Recipe shared with all kids successfully');
+        logger.debug('Recipe shared with all kids successfully');
       }
     } catch (error) {
       console.error('Error sharing recipe with all kids:', error);
@@ -239,8 +275,7 @@ export const recipeSharingService: RecipeSharingService = {
     try {
       const q = query(
         collection(db, 'sharedRecipes'),
-        where('parentId', '==', parentId),
-        where('parentUserId', '==', auth.currentUser?.uid)
+        where('parentId', '==', parentId)
       );
 
       const querySnapshot = await getDocs(q);

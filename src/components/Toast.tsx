@@ -21,7 +21,7 @@ export const Toast: React.FC<ToastProps> = ({
   onAction,
 }) => {
   const slideAnim = useRef(new Animated.Value(-100)).current;
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (visible) {

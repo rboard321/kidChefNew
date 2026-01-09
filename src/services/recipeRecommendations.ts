@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -35,7 +36,7 @@ export const recipeRecommendationsService: RecipeRecommendationsService = {
       }
 
       // Get shared recipes available to this kid
-      const sharedRecipes = await recipeSharingService.getSharedRecipesForKid(kidId);
+      const sharedRecipes = await recipeSharingService.getSharedRecipesForKid(kidId, kidProfile.parentId);
 
       if (sharedRecipes.length === 0) {
         return [];
@@ -83,7 +84,7 @@ export const recipeRecommendationsService: RecipeRecommendationsService = {
     try {
       // This could be used to pre-compute and store recommendations
       // For now, we generate them on-demand
-      console.log('Recommendation update triggered for kid:', kidId);
+      logger.debug('Recommendation update triggered for kid:', kidId);
     } catch (error) {
       console.error('Error updating recommendations:', error);
     }

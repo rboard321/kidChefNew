@@ -12,7 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../contexts/AuthContext';
 import { kidProgressService, AVAILABLE_BADGES } from '../../services/kidProgressService';
-import type { KidBadge, KidProgress } from '../../services/kidProgressService';
+import type { KidProgress } from '../../services/kidProgressService';
+import type { KidBadge } from '../../types';
 
 interface BadgeDisplayItem extends Omit<KidBadge, 'earnedAt'> {
   earned: boolean;

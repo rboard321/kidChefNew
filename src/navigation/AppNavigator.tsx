@@ -9,6 +9,7 @@ import { ErrorBoundary, AuthErrorBoundary } from '../components/ErrorBoundary';
 
 // Auth screens
 import AuthScreen from '../screens/auth/AuthScreen';
+import VerifyEmailScreen from '../screens/auth/VerifyEmailScreen';
 import PrivacyPolicyScreen from '../screens/auth/PrivacyPolicyScreen';
 import TermsOfServiceScreen from '../screens/auth/TermsOfServiceScreen';
 
@@ -24,11 +25,14 @@ import KidProfileDetailScreen from '../screens/parent/KidProfileDetailScreen';
 import RecipeDetailScreen from '../screens/parent/RecipeDetailScreen';
 import RecipeEditScreen from '../screens/parent/RecipeEditScreen';
 import RecipeManagementScreen from '../screens/parent/RecipeManagementScreen';
-import FavoritesScreen from '../screens/parent/FavoritesScreen';
 import KidRecipePreviewScreen from '../screens/parent/KidRecipePreviewScreen';
+import PricingScreen from '../screens/parent/PricingScreen';
+import CollectionListScreen from '../screens/parent/CollectionListScreen';
+import CollectionDetailScreen from '../screens/parent/CollectionDetailScreen';
 
 // Kid screens
 import KidHomeScreen from '../screens/kid/KidHomeScreen';
+import KidFavoritesScreen from '../screens/kid/KidFavoritesScreen';
 import KidProfileSelector from '../screens/kid/KidProfileSelector';
 import RecipeViewScreen from '../screens/kid/RecipeViewScreen';
 import KidSettingsScreen from '../screens/kid/KidSettingsScreen';
@@ -107,6 +111,8 @@ function KidTabNavigator() {
 
           if (route.name === 'Recipes') {
             iconName = focused ? 'restaurant' : 'restaurant-outline';
+          } else if (route.name === 'Favorites') {
+            iconName = focused ? 'heart' : 'heart-outline';
           } else if (route.name === 'Settings') {
             iconName = focused ? 'settings' : 'settings-outline';
           } else {
@@ -128,6 +134,11 @@ function KidTabNavigator() {
         options={{ title: 'My Recipes' }}
       />
       <KidTab.Screen
+        name="Favorites"
+        component={KidFavoritesScreen}
+        options={{ title: 'Favorites' }}
+      />
+      <KidTab.Screen
         name="Settings"
         component={KidSettingsScreen}
         options={{ title: 'Settings' }}
@@ -139,7 +150,7 @@ function KidTabNavigator() {
 
 // Main App Navigator
 export default function AppNavigator() {
-  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode } = useAuth();
+  const { user, loading, parentProfile, deviceMode, currentKid, selectKid, setDeviceMode, requiresEmailVerification } = useAuth();
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = React.useState(false);
   const navigationRef = useRef<NavigationContainerRef<any>>(null);
   const legalScreens = (
@@ -200,6 +211,15 @@ export default function AppNavigator() {
                 </AuthErrorBoundary>
               )}
             </RootStack.Screen>
+            {legalScreens}
+          </>
+        ) : requiresEmailVerification ? (
+          <>
+            <RootStack.Screen
+              name="VerifyEmail"
+              component={VerifyEmailScreen}
+              options={{ headerShown: false }}
+            />
             {legalScreens}
           </>
         ) : !hasCompletedOnboarding ? (
@@ -291,11 +311,19 @@ export default function AppNavigator() {
               }}
             />
             <RootStack.Screen
-              name="Favorites"
-              component={FavoritesScreen}
+              name="Collections"
+              component={CollectionListScreen}
               options={{
                 headerShown: true,
-                title: 'Favorites'
+                title: 'Collections'
+              }}
+            />
+            <RootStack.Screen
+              name="CollectionDetail"
+              component={CollectionDetailScreen}
+              options={{
+                headerShown: true,
+                title: 'Collection'
               }}
             />
             <RootStack.Screen
@@ -304,6 +332,15 @@ export default function AppNavigator() {
               options={{
                 headerShown: true,
                 title: 'Recipe Preview',
+                presentation: 'modal'
+              }}
+            />
+            <RootStack.Screen
+              name="Pricing"
+              component={PricingScreen}
+              options={{
+                headerShown: true,
+                title: 'Subscription Plans',
                 presentation: 'modal'
               }}
             />

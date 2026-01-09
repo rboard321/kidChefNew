@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { persistQueryClient } from '@tanstack/react-query-persist-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { logger } from '../utils/logger';
 
 // Create persister function for AsyncStorage
 const createAsyncStoragePersister = (config: any) => ({
@@ -84,12 +85,13 @@ export const initializeQueryClient = async () => {
           // Persist kid recipes, recipes, and kid profiles
           return query.queryKey[0] === 'kidRecipes' ||
                  query.queryKey[0] === 'recipes' ||
+                 query.queryKey[0] === 'collections' ||
                  query.queryKey[0] === 'kidProfiles' ||
                  query.queryKey[0] === 'parentProfile';
         },
       },
     });
-    console.log('Query client initialized with persistence');
+    logger.debug('Query client initialized with persistence');
   } catch (error) {
     console.error('Failed to initialize query client persistence:', error);
   }
@@ -99,6 +101,8 @@ export const initializeQueryClient = async () => {
 export const queryKeys = {
   recipes: (userId: string) => ['recipes', userId],
   recipe: (recipeId: string) => ['recipes', recipeId],
+  collections: (parentId: string) => ['collections', parentId],
+  collection: (collectionId: string) => ['collections', collectionId],
   kidRecipes: (kidId: string) => ['kidRecipes', kidId],
   kidRecipe: (kidRecipeId: string) => ['kidRecipes', kidRecipeId],
   kidProfiles: (parentId: string) => ['kidProfiles', parentId],
@@ -114,7 +118,7 @@ export const clearQueryCache = async () => {
   try {
     await queryClient.clear();
     await AsyncStorage.removeItem('KIDCHEF_CACHE');
-    console.log('Query cache cleared');
+    logger.debug('Query cache cleared');
   } catch (error) {
     console.error('Failed to clear query cache:', error);
   }
@@ -140,7 +144,7 @@ export const prefetchCommonData = async (userId: string, parentId?: string) => {
     }
 
     await Promise.all(promises);
-    console.log('Common data prefetched');
+    logger.debug('Common data prefetched');
   } catch (error) {
     console.error('Failed to prefetch common data:', error);
   }

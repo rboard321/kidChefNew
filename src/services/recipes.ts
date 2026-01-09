@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -11,7 +12,7 @@ import {
   orderBy,
   Timestamp
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { cacheService } from './cacheService';
 import type { Recipe, KidRecipe } from '../types';
 
@@ -25,16 +26,24 @@ export interface RecipeService {
   getKidRecipe: (kidRecipeId: string) => Promise<KidRecipe | null>;
 }
 
+export const buildRecipeData = (
+  recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>,
+  parentId: string,
+  now: Timestamp
+): Omit<Recipe, 'id'> => ({
+  ...recipe,
+  // DO NOT add userId here – parentId is the only ownership field
+  parentId,
+  status: recipe.status ?? 'active',
+  createdAt: now,
+  updatedAt: now,
+});
+
 export const recipeService: RecipeService = {
   async addRecipe(recipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'>, parentId: string) {
     try {
       const now = Timestamp.now();
-      const recipeData: Omit<Recipe, 'id'> = {
-        ...recipe,
-        parentId, // REQUIRED - links to ParentProfile
-        createdAt: now,
-        updatedAt: now,
-      };
+      const recipeData = buildRecipeData(recipe, parentId, now);
 
       const docRef = await addDoc(collection(db, 'recipes'), recipeData);
 
@@ -88,19 +97,25 @@ export const recipeService: RecipeService = {
 
   async getUserRecipes(parentId: string, skipCache: boolean = false): Promise<Recipe[]> {
     try {
+      if (!auth.currentUser) {
+        if (__DEV__) {
+          logger.debug('Skipping recipe fetch - no authenticated user.');
+        }
+        return [];
+      }
       // Check cache first (unless explicitly skipping cache for refresh)
       if (!skipCache) {
         const cached = cacheService.getRecipes(parentId);
-        if (cached) {
+        if (cached && cached.length > 0) {
           if (__DEV__) {
-            console.log('Returning cached recipes for parentId:', parentId);
+            logger.debug('Returning cached recipes for parentId:', parentId);
           }
           return cached;
         }
       }
 
       if (__DEV__) {
-        console.log(skipCache ? 'Skipping cache - fetching fresh recipes from Firestore for parentId:' : 'Cache miss - fetching recipes from Firestore for parentId:', parentId);
+        logger.debug(skipCache ? 'Skipping cache - fetching fresh recipes from Firestore for parentId:' : 'Cache miss - fetching recipes from Firestore for parentId:', parentId);
       }
 
       // Query recipes by parentId only (simplified from legacy dual-field approach)
@@ -141,11 +156,11 @@ export const recipeService: RecipeService = {
       // Check cache first
       const cached = cacheService.getRecipeDetail(recipeId);
       if (cached) {
-        console.log('Returning cached recipe detail for:', recipeId);
+        logger.debug('Returning cached recipe detail for:', recipeId);
         return cached;
       }
 
-      console.log('Cache miss - fetching recipe from Firestore:', recipeId);
+      logger.debug('Cache miss - fetching recipe from Firestore:', recipeId);
 
       const docSnap = await getDoc(doc(db, 'recipes', recipeId));
       if (docSnap.exists()) {
@@ -171,6 +186,7 @@ export const recipeService: RecipeService = {
       const kidRecipeData: Omit<KidRecipe, 'id'> = {
         ...kidRecipe,
         originalRecipeId: recipeId,
+        status: kidRecipe.status ?? 'active',
         createdAt: Timestamp.now(),
       };
 

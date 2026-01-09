@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -11,38 +12,45 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../services/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { kidRecipeManagerService } from '../../services/kidRecipeManager';
-import { recipeService } from '../../services/recipes';
 import { kidProgressService, AVAILABLE_BADGES } from '../../services/kidProgressService';
-import { recipeRecommendationsService } from '../../services/recipeRecommendations';
 import PinInput from '../../components/PinInput';
 import { SearchBar } from '../../components/SearchBar';
-import { searchRecipesKidMode, filterRecipes, SearchFilters } from '../../utils/searchUtils';
 import FilterChips, { FilterOption } from '../../components/FilterChips';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import type { Recipe, KidBadge } from '../../types';
+import { useKidRecipes } from '../../hooks/useKidRecipes';
+import type { Recipe, KidBadge, KidRecipe } from '../../types';
 import type { KidProgress } from '../../services/kidProgressService';
 
 export default function KidHomeScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const { currentKid, setDeviceModeWithPin, selectKid, parentProfile } = useAuth();
-  const [sharedRecipes, setSharedRecipes] = useState<Recipe[]>([]);
-  const [filteredRecipes, setFilteredRecipes] = useState<Recipe[]>([]);
+  type KidRecipeDisplay = KidRecipe & {
+    title: string;
+    image?: string;
+    totalTime?: number | string;
+    cookTime?: number | string;
+    cuisine?: string;
+    mealType?: string;
+    difficulty?: string;
+  };
+
+  const [sharedRecipes, setSharedRecipes] = useState<KidRecipeDisplay[]>([]);
+  const [filteredRecipes, setFilteredRecipes] = useState<KidRecipeDisplay[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showPinInput, setShowPinInput] = useState(false);
   const [progress, setProgress] = useState<KidProgress | null>(null);
   const [recentBadges, setRecentBadges] = useState<KidBadge[]>([]);
-  const [recommendations, setRecommendations] = useState<Recipe[]>([]);
-  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const { data: kidRecipesData = [], isLoading: kidRecipesLoading } = useKidRecipes(currentKid?.id || '');
 
   // If no kid is selected, redirect to selector
   if (!currentKid) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <View style={styles.errorContainer}>
           <Text style={styles.errorEmoji}>👶</Text>
           <Text style={styles.errorTitle}>No Kid Selected</Text>
@@ -50,10 +58,10 @@ export default function KidHomeScreen() {
             Please select which kid profile to use!
           </Text>
           <TouchableOpacity
-            style={styles.logoutButton}
+            style={styles.chooseKidButton}
             onPress={() => selectKid(null)}
           >
-            <Text style={styles.logoutButtonText}>Choose Kid</Text>
+            <Text style={styles.chooseKidButtonText}>Choose Kid</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -61,107 +69,97 @@ export default function KidHomeScreen() {
   }
 
   useEffect(() => {
-    if (currentKid) {
-      loadRecipes();
+    if (!currentKid) return;
+
+    logger.debug(`📚 Loaded ${kidRecipesData.length} recipes for kid: ${currentKid.name}`);
+
+    if (kidRecipesData.length > 0) {
+      const displayRecipes: KidRecipeDisplay[] = kidRecipesData.map((kidRecipe) => ({
+        ...kidRecipe,
+        title: kidRecipe.originalRecipeTitle,
+        image: kidRecipe.originalRecipeImage,
+        totalTime: kidRecipe.estimatedDuration,
+        cookTime: kidRecipe.estimatedDuration,
+      }));
+      setSharedRecipes(displayRecipes);
+      setFilteredRecipes(displayRecipes);
+    } else {
+      logger.debug('ℹ️ No recipes found for this kid');
+      setSharedRecipes([]);
+      setFilteredRecipes([]);
     }
+  }, [kidRecipesData, currentKid]);
+
+  useEffect(() => {
+    if (!currentKid) return;
+
+    const progressRef = doc(db, 'kidProgress', currentKid.id);
+    const unsubscribe = onSnapshot(progressRef, async (snapshot) => {
+      try {
+        if (!snapshot.exists()) {
+          const created = await kidProgressService.getProgress(currentKid.id);
+          setProgress(created);
+          setRecentBadges(created.badges.slice(0, 3));
+          return;
+        }
+
+        const data = snapshot.data() as KidProgress;
+        const normalizeDate = (value: any) => (value?.toDate ? value.toDate() : value);
+        const normalized: KidProgress = {
+          ...data,
+          createdAt: normalizeDate(data.createdAt),
+          updatedAt: normalizeDate(data.updatedAt),
+          badges: (data.badges || []).map((badge) => ({
+            ...badge,
+            earnedAt: normalizeDate(badge.earnedAt),
+          })),
+        };
+
+        setProgress(normalized);
+
+        const sortedBadges = normalized.badges
+          .sort((a, b) => a.earnedAt.getTime() < b.earnedAt.getTime() ? 1 : -1)
+          .slice(0, 3);
+        setRecentBadges(sortedBadges);
+      } catch (error) {
+        console.error('❌ Error loading kid progress:', error);
+      }
+    });
+
+    return () => unsubscribe();
   }, [currentKid]);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      if (currentKid) {
-        loadRecipes();
-      }
-    }, [currentKid])
-  );
-
-  const loadRecipes = async () => {
-    if (!currentKid) return;
-
-    try {
-      setLoading(true);
-
-      // Load kid recipes directly - these are the converted, kid-friendly versions
-      const kidRecipes = await kidRecipeManagerService.getKidRecipes(currentKid.id);
-
-      console.log(`📚 Loaded ${kidRecipes.length} recipes for kid: ${currentKid.name}`);
-
-      if (kidRecipes.length > 0) {
-        // Fetch original recipe titles/images for display
-        const recipesWithDetails = await Promise.all(
-          kidRecipes.map(async (kidRecipe) => {
-            const originalRecipe = await recipeService.getRecipe(kidRecipe.originalRecipeId);
-            return {
-              ...kidRecipe,
-              title: originalRecipe?.title || 'Untitled Recipe',
-              imageUrl: originalRecipe?.imageUrl,
-              sourceUrl: originalRecipe?.sourceUrl,
-            };
-          })
-        );
-
-        setSharedRecipes(recipesWithDetails as any);
-        setFilteredRecipes(recipesWithDetails as any);
-      } else {
-        console.log('ℹ️ No recipes found for this kid');
-        setSharedRecipes([]);
-        setFilteredRecipes([]);
-      }
-
-      // Load kid progress
-      const kidProgress = await kidProgressService.getProgress(currentKid.id);
-      setProgress(kidProgress);
-
-      // Get recent badges (last 3)
-      const sortedBadges = kidProgress.badges
-        .sort((a, b) => new Date(b.earnedAt).getTime() - new Date(a.earnedAt).getTime())
-        .slice(0, 3);
-      setRecentBadges(sortedBadges);
-
-      // Load recommendations in background
-      loadRecommendations();
-    } catch (error) {
-      console.error('❌ Error loading kid recipes:', error);
-      Alert.alert('Error', 'Failed to load recipes. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadRecommendations = async () => {
-    if (!currentKid) return;
-
-    try {
-      setLoadingRecommendations(true);
-      const recs = await recipeRecommendationsService.getRecommendationsForKid(currentKid.id, 3);
-      setRecommendations(recs);
-    } catch (error) {
-      console.error('Error loading recommendations:', error);
-    } finally {
-      setLoadingRecommendations(false);
-    }
-  };
 
   // Handle search and filter combination for kids
   useEffect(() => {
     let filtered = sharedRecipes;
+    const normalizedQuery = searchQuery.trim().toLowerCase();
 
-    // Apply search first
-    if (searchQuery.trim() !== '') {
-      filtered = searchRecipesKidMode(filtered, searchQuery);
+    // Apply search first (kid recipes only)
+    if (normalizedQuery !== '') {
+      const words = normalizedQuery.split(/\s+/).filter(Boolean);
+      filtered = filtered.filter((recipe) =>
+        words.some((word) => recipe.title.toLowerCase().includes(word))
+      );
     }
 
-    // Apply active filters
+    // Apply active filters with kid-recipe fields
     if (activeFilters.length > 0) {
-      const searchFilters: SearchFilters = {};
-
-      activeFilters.forEach(filterId => {
-        const filterOption = kidFilterOptions.find(opt => opt.id === filterId);
-        if (filterOption && filterOption.value) {
-          Object.assign(searchFilters, filterOption.value);
-        }
-      });
-
-      filtered = filterRecipes(filtered, searchFilters);
+      filtered = filtered.filter((recipe) =>
+        activeFilters.every((filterId) => {
+          switch (filterId) {
+            case 'quick':
+              return (recipe.estimatedDuration ?? 0) <= 30;
+            case 'fun':
+              return (recipe.difficulty ?? 'easy') === 'easy';
+            case 'dessert':
+              return recipe.mealType === 'dessert';
+            case 'snack':
+              return recipe.mealType === 'snack';
+            default:
+              return true;
+          }
+        })
+      );
     }
 
     setFilteredRecipes(filtered);
@@ -190,7 +188,7 @@ export default function KidHomeScreen() {
   const handleRecipePress = (recipe: any) => {
     if (!currentKid) return;
     // Pass kidRecipeId since we're in kid mode and recipe.id is the kid recipe ID
-    navigation.navigate('RecipeView' as never, { kidRecipeId: recipe.id, kidId: currentKid.id } as never);
+    navigation.navigate('RecipeView', { kidRecipeId: recipe.id, kidId: currentKid.id });
   };
 
   const handleExitKidMode = () => {
@@ -235,60 +233,34 @@ export default function KidHomeScreen() {
   };
 
 
-  const renderSharedRecipe = ({ item }: { item: Recipe }) => (
+  const renderSharedRecipe = ({ item }: { item: KidRecipeDisplay }) => (
     <TouchableOpacity style={[styles.recipeCard, styles.kidRecipeCard]} onPress={() => handleRecipePress(item)}>
-      {item.image && item.image.startsWith('http') ? (
+      {item.originalRecipeImage && item.originalRecipeImage.startsWith('http') ? (
         <Image
-          source={{ uri: item.image }}
+          source={{ uri: item.originalRecipeImage }}
           style={styles.recipeImage}
           contentFit="cover"
           cachePolicy="memory-disk"
         />
       ) : (
-        <Text style={styles.recipeEmoji}>{item.image || '🍽️'}</Text>
+        <Text style={styles.recipeEmoji}>🍽️</Text>
       )}
       <View style={styles.recipeInfo}>
-        <Text style={styles.recipeTitle}>{item.title}</Text>
+        <Text style={styles.recipeTitle}>{item.originalRecipeTitle}</Text>
         <Text style={styles.recipeSubtitle}>Shared by your parent!</Text>
         <View style={styles.recipeDetails}>
           <View style={[styles.difficultyBadge, { backgroundColor: '#10b981' }]}>
             <Text style={styles.difficultyText}>{currentKid?.readingLevel}</Text>
           </View>
-          <Text style={styles.timeText}>{item.totalTime || item.cookTime || 30}m</Text>
+          <Text style={styles.timeText}>{item.estimatedDuration || 30}m</Text>
         </View>
       </View>
     </TouchableOpacity>
   );
 
-  const renderRecommendationCard = ({ item }: { item: Recipe }) => (
-    <TouchableOpacity style={[styles.recipeCard, styles.recommendationCard]} onPress={() => handleRecipePress(item)}>
-      {item.image && item.image.startsWith('http') ? (
-        <Image
-          source={{ uri: item.image }}
-          style={styles.recommendationImage}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-        />
-      ) : (
-        <Text style={styles.recommendationEmoji}>{item.image || '🍽️'}</Text>
-      )}
-      <View style={styles.recipeInfo}>
-        <Text style={styles.recipeTitle}>{item.title}</Text>
-        <Text style={styles.recommendationSubtitle}>⭐ Recommended for you!</Text>
-        <View style={styles.recipeDetails}>
-          <View style={[styles.difficultyBadge, { backgroundColor: '#f59e0b' }]}>
-            <Text style={styles.difficultyText}>{item.difficulty || 'easy'}</Text>
-          </View>
-          <Text style={styles.timeText}>{item.totalTime || item.cookTime || '30min'}</Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-
-  if (loading) {
+  if (kidRecipesLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#1e40af" />
           <Text style={styles.loadingText}>Loading your recipes...</Text>
@@ -302,12 +274,19 @@ export default function KidHomeScreen() {
 
   return (
     <ErrorBoundary>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
-          <Text style={styles.greeting}>
-            Hi {currentKid?.name}! 👨‍🍳
-          </Text>
+          <View style={styles.headerTop}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.greeting}>
+                Hi {currentKid?.name}! 👨‍🍳
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.exitButton} onPress={handleExitKidMode}>
+              <Text style={styles.exitButtonText}>Exit</Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.subtitle}>
             {searchQuery || activeFilters.length > 0
               ? `Found ${displayedRecipes} of ${totalRecipes} recipes!`
@@ -315,9 +294,6 @@ export default function KidHomeScreen() {
                 ? 'Pick a fun recipe to make!'
                 : 'Ask your parent to share some recipes!'}
           </Text>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleExitKidMode}>
-            <Text style={styles.logoutButtonText}>👋 Exit Kid Mode</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Progress Section */}
@@ -369,37 +345,11 @@ export default function KidHomeScreen() {
           </View>
         )}
 
-        {/* Recommendations Section */}
-        {recommendations.length > 0 && !searchQuery && (
-          <View style={styles.recommendationsSection}>
-            <View style={styles.recommendationsHeader}>
-              <Text style={styles.recommendationsTitle}>🌟 Perfect for You!</Text>
-              <Text style={styles.recommendationsSubtitle}>Recipes picked just for {currentKid?.name}</Text>
-            </View>
-
-            {loadingRecommendations ? (
-              <View style={styles.recommendationsLoading}>
-                <ActivityIndicator size="small" color="#f59e0b" />
-                <Text style={styles.recommendationsLoadingText}>Finding great recipes...</Text>
-              </View>
-            ) : (
-              <FlatList
-                horizontal
-                data={recommendations}
-                renderItem={renderRecommendationCard}
-                keyExtractor={(item) => `rec_${item.id}`}
-                contentContainerStyle={styles.recommendationsList}
-                showsHorizontalScrollIndicator={false}
-              />
-            )}
-          </View>
-        )}
-
         {totalRecipes > 0 && (
           <View>
             <View style={styles.searchContainer}>
               <SearchBar
-                placeholder="🔍 Find a yummy recipe to cook!"
+                placeholder="Find a yummy recipe to cook!"
                 value={searchQuery}
                 onChangeText={handleSearch}
                 kidMode={true}
@@ -482,16 +432,37 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
   },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  headerLeft: {
+    flex: 1,
+  },
   greeting: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#1e40af',
-    marginBottom: 5,
   },
   subtitle: {
     fontSize: 18,
     color: '#1e40af',
     fontWeight: '500',
+  },
+  exitButton: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  exitButtonText: {
+    color: '#64748b',
+    fontSize: 14,
+    fontWeight: '600',
   },
   content: {
     flex: 1,
@@ -672,16 +643,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     marginBottom: 20,
   },
-  logoutButton: {
-    backgroundColor: '#ef4444',
+  chooseKidButton: {
+    backgroundColor: '#f1f5f9',
     paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginLeft: 10,
+    paddingVertical: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
   },
-  logoutButtonText: {
-    color: 'white',
-    fontSize: 14,
+  chooseKidButtonText: {
+    color: '#64748b',
+    fontSize: 16,
     fontWeight: '600',
   },
   progressSection: {
@@ -803,66 +775,5 @@ const styles = StyleSheet.create({
     color: '#1e40af',
     textAlign: 'center',
     lineHeight: 24,
-  },
-  recommendationsSection: {
-    backgroundColor: 'white',
-    marginHorizontal: 15,
-    marginBottom: 20,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 2,
-    borderColor: '#fbbf24',
-  },
-  recommendationsHeader: {
-    marginBottom: 15,
-  },
-  recommendationsTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1e40af',
-    marginBottom: 5,
-  },
-  recommendationsSubtitle: {
-    fontSize: 14,
-    color: '#f59e0b',
-    fontWeight: '500',
-  },
-  recommendationsLoading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-  },
-  recommendationsLoadingText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#f59e0b',
-  },
-  recommendationsList: {
-    paddingRight: 20,
-  },
-  recommendationCard: {
-    borderWidth: 2,
-    borderColor: '#fbbf24',
-    backgroundColor: '#fefbf3',
-    width: 280,
-    marginRight: 15,
-  },
-  recommendationImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 10,
-    marginRight: 15,
-  },
-  recommendationEmoji: {
-    fontSize: 40,
-    marginRight: 15,
-  },
-  recommendationSubtitle: {
-    fontSize: 13,
-    color: '#f59e0b',
-    marginBottom: 8,
-    fontStyle: 'italic',
-    fontWeight: '600',
   },
 });

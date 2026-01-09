@@ -1,4 +1,5 @@
 import { getEnvironmentInfo, isProduction } from './environment';
+import { logger } from './logger';
 
 interface ApiKeyValidation {
   isValid: boolean;
@@ -110,16 +111,16 @@ export class ApiKeyManager {
           console.error('  Error:', error);
         });
       } else {
-        console.log('✅ Firebase API keys validated successfully');
+        logger.debug('✅ Firebase API keys validated successfully');
       }
 
       summary.firebase.warnings.forEach(warning => {
         console.warn('  Warning:', warning);
       });
 
-      console.log('Environment:', summary.firebase.environment);
-      console.log('Firebase Key Type:', summary.firebase.keyType);
-      console.log('OpenAI Keys: Server-side only (Cloud Functions)');
+      logger.debug('Environment:', summary.firebase.environment);
+      logger.debug('Firebase Key Type:', summary.firebase.keyType);
+      logger.debug('OpenAI Keys: Server-side only (Cloud Functions)');
 
       console.groupEnd();
     }

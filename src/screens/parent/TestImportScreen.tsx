@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import {
+import { logger } from '../../utils/logger';
   View,
   Text,
   TouchableOpacity,
@@ -33,7 +33,7 @@ const TestImportScreen: React.FC = () => {
     if (testSession) {
       const completed = testScenarioRunner.completeTestSession(testSession);
       const report = testScenarioRunner.generateTestReport(completed);
-      console.log(report);
+      logger.debug(report);
       Alert.alert(
         'Test Session Complete',
         `Success Rate: ${(completed.parentSuccessRate! * 100).toFixed(1)}%\n\nSee console for full report.`,
@@ -57,16 +57,16 @@ const TestImportScreen: React.FC = () => {
           {
             text: 'Start Test',
             onPress: async () => {
-              console.log(`🧪 Starting test: ${scenario.name}`);
-              console.log(`⏱️ Timer started - target: ${scenario.timerTarget}s`);
-              console.log(`📋 Instructions:`);
+              logger.debug(`🧪 Starting test: ${scenario.name}`);
+              logger.debug(`⏱️ Timer started - target: ${scenario.timerTarget}s`);
+              logger.debug(`📋 Instructions:`);
               scenario.testInstructions.forEach(instruction => {
-                console.log(`   ${instruction}`);
+                logger.debug(`   ${instruction}`);
               });
 
               // Run the mock import
               const jobId = await importRecipe(scenario.testUrl);
-              console.log(`📦 Import job created: ${jobId}`);
+              logger.debug(`📦 Import job created: ${jobId}`);
 
               // Note: The actual review happens in RecipeReviewScreen
               // Parent will complete the flow there, timing manually
@@ -94,7 +94,7 @@ const TestImportScreen: React.FC = () => {
             onPress: async () => {
               testScenarioRunner.disableMockMode();
               const jobId = await importRecipe(url);
-              console.log(`📦 Real world import job created: ${jobId}`);
+              logger.debug(`📦 Real world import job created: ${jobId}`);
             }
           }
         ]

@@ -15,12 +15,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import { BugReportModal } from '../../components/BugReportModal';
 import { featureFlags, getAppVersionString, config } from '../../utils/environment';
 import { kidProgressService } from '../../services/kidProgressService';
+import { SUBSCRIPTION_PLANS } from '../../config/plans';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../types';
 
 export default function SettingsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { signOut, kidProfiles } = useAuth();
+  const { signOut, kidProfiles, subscription, effectivePlan } = useAuth();
   const [safetyNotes, setSafetyNotes] = useState(true);
   const [readAloud, setReadAloud] = useState(false);
   const [notifications, setNotifications] = useState(true);
@@ -225,6 +226,32 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Subscription</Text>
+
+          <View style={styles.subscriptionInfo}>
+            <View style={styles.subscriptionHeader}>
+              <Text style={styles.subscriptionPlanLabel}>Current Plan</Text>
+              <View style={styles.subscriptionPlanBadge}>
+                <Text style={styles.subscriptionPlanName}>
+                  {SUBSCRIPTION_PLANS[effectivePlan].name}
+                </Text>
+              </View>
+            </View>
+            {subscription?.isBetaTester && (
+              <View style={styles.betaTesterBadge}>
+                <Text style={styles.betaTesterText}>🎉 Beta Tester - Free Access</Text>
+              </View>
+            )}
+          </View>
+
+          <ActionButton
+            title="View Plans & Pricing"
+            icon="💳"
+            onPress={() => navigation.navigate('Pricing')}
+          />
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Support</Text>
 
           <ActionButton
@@ -409,5 +436,48 @@ const styles = StyleSheet.create({
     color: '#d1d5db',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  subscriptionInfo: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  subscriptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  subscriptionPlanLabel: {
+    fontSize: 14,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
+  subscriptionPlanBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+  },
+  subscriptionPlanName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#3b82f6',
+  },
+  betaTesterBadge: {
+    backgroundColor: '#d1fae5',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#10b981',
+  },
+  betaTesterText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#059669',
+    textAlign: 'center',
   },
 });

@@ -43,14 +43,15 @@ service cloud.firestore {
 
     // Kid Profiles - only the parent can manage their kids
     match /kidProfiles/{kidId} {
-      allow read, write: if isAuthenticated() && (
-        // Parent can access their own kid's profile
-        isOwnerOfParentProfile(resource.data.parentId) ||
-        // For creation, check the parent ID in the request
-        (request.resource != null && isOwnerOfParentProfile(request.resource.data.parentId))
-      );
+      allow read: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
       allow create: if isAuthenticated() &&
         isOwnerOfParentProfile(request.resource.data.parentId);
+      allow update: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId;
+      allow delete: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
       allow list: if isAuthenticated() &&
         isOwnerOfParentProfile(resource.data.parentId);
     }
@@ -78,6 +79,26 @@ service cloud.firestore {
         isOwnerOfParentProfile(resource.data.parentId);
     }
 
+    // Collections - parent-only recipe groupings
+    match /collections/{collectionId} {
+      allow read: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId);
+      allow create: if isAuthenticated() &&
+        request.resource.data.parentId != null &&
+        isOwnerOfParentProfile(request.resource.data.parentId);
+      allow update: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId;
+      allow delete: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId);
+      allow list: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId);
+    }
+
     // Kid-friendly recipes - only parent can access their kids' recipes (parentId-based only)
     match /kidRecipes/{kidRecipeId} {
       allow read: if isAuthenticated() && (
@@ -96,12 +117,15 @@ service cloud.firestore {
         // Parent can update via parentId - check both existing and new data
         (resource.data.parentId != null && isOwnerOfParentProfile(resource.data.parentId)) &&
         (request.resource.data.parentId != null && isOwnerOfParentProfile(request.resource.data.parentId)) &&
-        // Only allow approval-related field changes
+        // Only allow approval-related field changes and denormalized display fields
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'approvalStatus',
           'approvalReviewedAt',
           'approvalNotes',
-          'isActive'
+          'isActive',
+          'originalRecipeTitle',
+          'originalRecipeImage',
+          'originalRecipeUrl'
         ]))
       );
       allow delete: if isAuthenticated() && (
@@ -113,7 +137,9 @@ service cloud.firestore {
 
     // Global kid-friendly recipe cache - authenticated users can cache their own conversions
     match /kidRecipeCache/{cacheId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+        resource.data.parentId != null &&
+        isOwnerOfParentProfile(resource.data.parentId);
       // Allow authenticated users to cache their own recipe conversions for performance (parentId-based only)
       allow write, create: if isAuthenticated() && (
         // Check that the cache entry belongs to the authenticated user (required - no legacy fallback)
@@ -131,10 +157,15 @@ service cloud.firestore {
 
     // Family Meals - only for family members
     match /familyMeals/{mealId} {
-      allow read, write: if isAuthenticated() &&
+      allow read: if isAuthenticated() &&
         isOwnerOfParentProfile(resource.data.parentId);
       allow create: if isAuthenticated() &&
         isOwnerOfParentProfile(request.resource.data.parentId);
+      allow update: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId;
+      allow delete: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
       allow list: if isAuthenticated() &&
         isOwnerOfParentProfile(resource.data.parentId);
     }
@@ -157,36 +188,40 @@ service cloud.firestore {
       // Allow create - check the request data for new documents
       allow create: if isAuthenticated() && (
         // Parent creating their own shared recipe
-        request.resource.data.parentUserId == request.auth.uid
+        isOwnerOfParentProfile(request.resource.data.parentId)
       );
 
       // Allow update - check both existing and new data
       allow update: if isAuthenticated() && (
         // Original document belongs to user and new document still belongs to user
-        resource.data.parentUserId == request.auth.uid &&
-        request.resource.data.parentUserId == request.auth.uid
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        isOwnerOfParentProfile(request.resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId
       );
 
       // Allow delete - check existing document ownership
       allow delete: if isAuthenticated() && (
-        resource.data.parentUserId == request.auth.uid
+        isOwnerOfParentProfile(resource.data.parentId)
       );
 
-      // Allow list for queries - simplified since all queries now include parentUserId
+      // Allow list for queries - parent ownership enforced per document
       allow list: if isAuthenticated() && (
-        resource.data.parentUserId == request.auth.uid
+        isOwnerOfParentProfile(resource.data.parentId)
       );
     }
 
     // Kid recipe ratings - parents can rate kid recipes they have access to
     match /kidRecipeRatings/{ratingId} {
-      allow read, write: if isAuthenticated() && (
-        // Parent who created the rating
-        isOwnerOfParentProfile(resource.data.parentId)
-      );
+      allow read: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
       allow create: if isAuthenticated() && (
         isOwnerOfParentProfile(request.resource.data.parentId)
       );
+      allow update: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId;
+      allow delete: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
       allow list: if isAuthenticated() && (
         isOwnerOfParentProfile(resource.data.parentId)
       );
@@ -194,7 +229,7 @@ service cloud.firestore {
 
     // Step reports - kids and parents can report issues with recipe steps
     match /stepReports/{reportId} {
-      allow read, write: if isAuthenticated() && (
+      allow read: if isAuthenticated() && (
         // Parent who created the report
         isOwnerOfParentProfile(resource.data.parentId) ||
         // Kid the recipe was for (via parent ownership)
@@ -203,6 +238,16 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         isOwnerOfParentProfile(request.resource.data.parentId) ||
         isParentOfKid(request.resource.data.kidId)
+      );
+      allow update: if isAuthenticated() && (
+        isOwnerOfParentProfile(resource.data.parentId) ||
+        isParentOfKid(resource.data.kidId)
+      ) && (
+        request.resource.data.parentId == resource.data.parentId
+      );
+      allow delete: if isAuthenticated() && (
+        isOwnerOfParentProfile(resource.data.parentId) ||
+        isParentOfKid(resource.data.kidId)
       );
       allow list: if isAuthenticated() && (
         isOwnerOfParentProfile(resource.data.parentId) ||
@@ -239,26 +284,18 @@ service cloud.firestore {
 
     // Recipe Favorites - parents can manage their own favorites and their kids' favorites
     match /recipeFavorites/{favoriteId} {
-      // Allow read - handle both existing documents and non-existing documents
+      // Parents can manage favorites via parentId ownership
       allow read: if isAuthenticated() && (
-        // If document doesn't exist, allow read for authenticated users to check
-        resource == null ||
-        // If document exists, check ownership
-        (resource != null && (
-          (resource.data.parentUserId != null && resource.data.parentUserId == request.auth.uid)
-        ))
+        resource == null || isOwnerOfParentProfile(resource.data.parentId)
       );
-
-      // Allow write (covers both create and update) - check the request data
-      allow write: if isAuthenticated() && (
-        // Parent creating/updating their own favorite (no kidId)
-        request.resource.data.parentUserId == request.auth.uid
-      );
-
-      // Allow list for queries - only user's own favorites
-      allow list: if isAuthenticated() && (
-        resource.data.parentUserId == request.auth.uid
-      );
+      allow create: if isAuthenticated() &&
+        isOwnerOfParentProfile(request.resource.data.parentId);
+      allow update: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId) &&
+        isOwnerOfParentProfile(request.resource.data.parentId) &&
+        request.resource.data.parentId == resource.data.parentId;
+      allow delete: if isAuthenticated() &&
+        isOwnerOfParentProfile(resource.data.parentId);
     }
 
     // Beta feedback collection - users can create feedback, only admins can read/update
@@ -307,6 +344,33 @@ service cloud.firestore {
         request.resource.data.userId == request.auth.uid;
       // Only Cloud Functions can read/update events for processing
       allow read, write: if false;
+    }
+
+    // Subscription data - user subscription plans and status
+    match /subscriptions/{parentId} {
+      // Users can read their own subscription
+      allow read: if isAuthenticated() && isOwnerOfParentProfile(parentId);
+
+      // Users can create their own free subscription on first login (beta phase)
+      // This allows createFreeSubscription() to work from the client
+      allow create: if isAuthenticated() &&
+                       isOwnerOfParentProfile(parentId) &&
+                       request.resource.data.plan == 'free' &&
+                       request.resource.data.status in ['beta', 'active'] &&
+                       request.resource.data.isBetaTester == true;
+
+      // Only Cloud Functions can update/delete subscriptions
+      // (for webhook handling from Stripe/Apple when payment is enabled)
+      allow update, delete: if false;
+    }
+
+    // Usage Tracking - monthly quotas for imports and AI conversions
+    match /usageTracking/{parentId} {
+      // Users can read their own usage data
+      allow read: if isAuthenticated() && isOwnerOfParentProfile(parentId);
+
+      // Users and Cloud Functions can write (for creating/updating counters)
+      allow write: if isAuthenticated() && isOwnerOfParentProfile(parentId);
     }
 
     // Deny all other access

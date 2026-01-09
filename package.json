@@ -12,7 +12,8 @@
     "start:prod": "NODE_ENV=production EXPO_PUBLIC_ENVIRONMENT=production expo start --no-dev --minify --clear",
     "build:dev": "EXPO_PUBLIC_ENVIRONMENT=development eas build --platform all --profile development",
     "build:staging": "EXPO_PUBLIC_ENVIRONMENT=staging eas build --platform all --profile preview",
-    "build:prod": "EXPO_PUBLIC_ENVIRONMENT=production eas build --platform all --profile production"
+    "build:prod": "EXPO_PUBLIC_ENVIRONMENT=production eas build --platform all --profile production",
+    "test": "vitest"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -48,7 +49,8 @@
     "@types/react": "~19.1.0",
     "@types/react-native": "^0.72.8",
     "firebase-admin": "^13.6.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^1.6.0"
   },
   "private": true
 }

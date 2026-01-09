@@ -1,6 +1,7 @@
 import { getEnvironmentInfo } from './environment';
 import { ApiKeyManager } from './apiKeyManager';
 import { validateAppCheckConfig } from '../services/appCheck';
+import { logger } from './logger';
 
 interface ValidationResult {
   isValid: boolean;
@@ -185,7 +186,7 @@ export class EnvironmentValidator {
     console.group(`🛡️ Environment Validation - ${result.environment.toUpperCase()}`);
 
     if (result.isValid) {
-      console.log('✅ Environment validation passed');
+      logger.debug('✅ Environment validation passed');
     } else {
       console.error('❌ Environment validation failed');
     }
@@ -204,13 +205,13 @@ export class EnvironmentValidator {
 
     if (result.issues.info.length > 0) {
       console.group('ℹ️ Information');
-      result.issues.info.forEach(info => console.log('  ℹ️', info));
+      result.issues.info.forEach(info => logger.debug('  ℹ️', info));
       console.groupEnd();
     }
 
     if (result.recommendations.length > 0) {
       console.group('💡 Recommendations');
-      result.recommendations.forEach(rec => console.log('  💡', rec));
+      result.recommendations.forEach(rec => logger.debug('  💡', rec));
       console.groupEnd();
     }
 

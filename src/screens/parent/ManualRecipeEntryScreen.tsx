@@ -107,7 +107,7 @@ export default function ManualRecipeEntryScreen() {
     setLoading(true);
 
     try {
-      const newRecipe: Omit<Recipe, 'id' | 'userId' | 'createdAt' | 'updatedAt'> = {
+      const newRecipe: Omit<Recipe, 'id' | 'createdAt' | 'updatedAt'> = {
         title: recipeData.title.trim(),
         description: recipeData.description.trim(),
         image: '🍽️', // Default emoji
@@ -115,7 +115,7 @@ export default function ManualRecipeEntryScreen() {
         cookTime: recipeData.cookTime.trim(),
         totalTime: '',
         servings: parseInt(recipeData.servings) || 4,
-        difficulty: recipeData.difficulty,
+        difficulty: recipeData.difficulty.toLowerCase() as 'easy' | 'medium' | 'hard',
         ingredients: validIngredients,
         instructions: validInstructions,
         sourceUrl: '',
@@ -123,7 +123,7 @@ export default function ManualRecipeEntryScreen() {
         kidVersionId: null,
       };
 
-      await recipeService.createRecipe(newRecipe);
+      await recipeService.addRecipe(newRecipe, user.uid);
 
       Alert.alert(
         'Recipe Saved! 🎉',

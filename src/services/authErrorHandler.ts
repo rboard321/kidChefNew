@@ -1,6 +1,7 @@
 import { FirebaseError } from 'firebase/app';
 import { AuthError, AuthErrorCodes } from 'firebase/auth';
 import { errorReportingService } from './errorReporting';
+import { logger } from '../utils/logger';
 
 export interface AuthErrorInfo {
   code: string;
@@ -231,7 +232,7 @@ export class AuthOperationManager {
         const retryDelay = authErrorHandler.getRetryDelay(error, currentRetryCount + 1);
 
         if (__DEV__) {
-          console.log(`🔄 Auto-retrying ${operationId} after ${retryDelay}ms (attempt ${currentRetryCount + 1})`);
+          logger.debug(`🔄 Auto-retrying ${operationId} after ${retryDelay}ms (attempt ${currentRetryCount + 1})`);
         }
 
         this.retryCount.set(operationId, currentRetryCount + 1);

@@ -31,7 +31,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 }) => {
   const [localValue, setLocalValue] = useState(value);
   const [isFocused, setIsFocused] = useState(false);
-  const debounceTimer = useRef<NodeJS.Timeout>();
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const inputRef = useRef<TextInput>(null);
 

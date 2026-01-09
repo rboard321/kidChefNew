@@ -5,6 +5,7 @@ import { cacheService } from '../services/cacheService';
 import { useAuth } from './AuthContext';
 import { importProgressService } from '../services/importProgressService';
 import { testScenarioRunner, partialSuccessTestScenarios } from '../utils/testScenarios';
+import { canImportRecipe, incrementImportCount } from '../services/usageTracking';
 import type { Recipe } from '../types';
 
 interface ImportJob {
@@ -39,7 +40,7 @@ export const useImport = () => {
 };
 
 export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, parentProfile } = useAuth();
+  const { user, parentProfile, subscription } = useAuth();
   const [activeImports, setActiveImports] = useState<ImportJob[]>([]);
   const jobIdCounter = useRef(0);
 
@@ -68,7 +69,7 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
 
     try {
-      // Save the completed recipe
+      // Save the completed recipe (no recipe count limit - storage is unlimited)
       const recipeWithIds = {
         ...finalRecipe,
         parentId: parentProfile.id
@@ -76,6 +77,9 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const recipeId = await recipeService.addRecipe(recipeWithIds, parentProfile.id);
       const savedRecipe = { ...recipeWithIds, id: recipeId, createdAt: new Date(), updatedAt: new Date() };
+
+      // Increment import counter (this counts as an import completion)
+      await incrementImportCount(parentProfile.id);
 
       updateImportJob(jobId, {
         status: ImportStatus.COMPLETE,
@@ -126,6 +130,14 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       throw new Error('Parent profile required for recipe import');
     }
 
+    // Check monthly import limit
+    const importCheck = await canImportRecipe(parentProfile.id, subscription);
+    if (!importCheck.allowed) {
+      throw new Error(
+        `You've used your ${importCheck.limit} free recipe imports this month. Add recipes manually or upgrade for unlimited imports.`
+      );
+    }
+
     const jobId = generateJobId();
 
     // Create initial import job
@@ -153,6 +165,10 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const testScenario = partialSuccessTestScenarios.find(scenario => scenario.testUrl === url);
         let result: ImportResult;
 
+        if (testScenario && !__DEV__) {
+          throw new Error('Test scenarios are disabled in production');
+        }
+
         if (testScenario && __DEV__) {
           // Use test scenario runner for development testing
           result = await testScenarioRunner.runScenario(testScenario);
@@ -161,14 +177,15 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           result = await recipeImportService.importFromUrl(url, {
             maxRetries: 3,
             onRetry: (attempt, error) => {
-              updateImportJob(jobId, {
-                progress: `Retrying... (attempt ${attempt})`,
-                error: {
-                  code: 'RETRY',
-                  message: error.message,
-                  canRetry: true
-                }
-              });
+                  updateImportJob(jobId, {
+                    progress: `Retrying... (attempt ${attempt})`,
+                    error: {
+                      code: 'RETRY',
+                      message: error.message,
+                      canRetry: true,
+                      severity: 'low' as const
+                    }
+                  });
             }
           });
         }
@@ -182,6 +199,9 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             };
             const recipeId = await recipeService.addRecipe(recipeWithIds, parentProfile.id);
             const savedRecipe = { ...recipeWithIds, id: recipeId, createdAt: new Date(), updatedAt: new Date() };
+
+            // Increment import counter (tracks monthly usage)
+            await incrementImportCount(parentProfile.id);
 
             updateImportJob(jobId, {
               status: ImportStatus.COMPLETE,
@@ -202,7 +222,8 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               code: 'SAVE_FAILED',
               message: 'Recipe imported but failed to save',
               suggestion: 'Please try importing again',
-              canRetry: true
+              canRetry: true,
+              severity: 'high' as const
             };
 
             updateImportJob(jobId, {
@@ -234,7 +255,8 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           const error = result.error || {
             code: 'UNKNOWN_ERROR',
             message: 'Import failed for unknown reason',
-            canRetry: true
+            canRetry: true,
+            severity: 'high' as const
           };
 
           updateImportJob(jobId, {
@@ -254,7 +276,8 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const importError: ImportError = {
           code: 'IMPORT_FAILED',
           message: error?.message || 'Import failed',
-          canRetry: true
+          canRetry: true,
+          severity: 'high' as const
         };
 
         updateImportJob(jobId, {
@@ -274,7 +297,8 @@ export const ImportProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const importError: ImportError = {
         code: 'IMPORT_FAILED',
         message: error?.message || 'Failed to start import',
-        canRetry: true
+        canRetry: true,
+        severity: 'high' as const
       };
 
       updateImportJob(jobId, {

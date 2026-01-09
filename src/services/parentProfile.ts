@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -10,7 +11,7 @@ import {
   where,
   Timestamp
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import type { ParentProfile, UserSettings } from '../types';
 
 export interface ParentProfileService {
@@ -45,6 +46,12 @@ export const parentProfileService: ParentProfileService = {
 
   async getParentProfile(userId: string): Promise<ParentProfile | null> {
     try {
+      if (!auth.currentUser) {
+        if (__DEV__) {
+          logger.debug('Skipping parent profile fetch - no authenticated user.');
+        }
+        return null;
+      }
       const q = query(
         collection(db, 'parentProfiles'),
         where('userId', '==', userId)

@@ -13,16 +13,16 @@ export type AppVariant = 'dev' | 'staging' | 'production';
 import Constants from 'expo-constants';
 
 export const getEnvironment = (): Environment => {
-  const configEnv = (Constants.expoConfig?.extra?.environment ||
-    (Constants.manifest as any)?.extra?.environment) as Environment | undefined;
-  if (configEnv && ['development', 'staging', 'production'].includes(configEnv)) {
-    return configEnv;
-  }
-
   // Use EXPO_PUBLIC_ENVIRONMENT as primary source (available at runtime in React Native)
   const expoEnv = process.env.EXPO_PUBLIC_ENVIRONMENT as Environment;
   if (expoEnv && ['development', 'staging', 'production'].includes(expoEnv)) {
     return expoEnv;
+  }
+
+  const configEnv = (Constants.expoConfig?.extra?.environment ||
+    (Constants.manifest as any)?.extra?.environment) as Environment | undefined;
+  if (configEnv && ['development', 'staging', 'production'].includes(configEnv)) {
+    return configEnv;
   }
 
   // Fallback to NODE_ENV for build-time detection (only available during build)
@@ -73,7 +73,7 @@ export const featureFlags = {
  */
 export const config = {
   apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL || 'https://dev-api.kidchef.app',
-  supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL || 'dev-support@kidchef.app',
+  supportEmail: process.env.EXPO_PUBLIC_SUPPORT_EMAIL || 'kidchefapp@gmail.com',
   logLevel: (process.env.EXPO_PUBLIC_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'debug',
   // SECURITY: OpenAI API key removed - now server-side only via Cloud Functions
 };
@@ -154,7 +154,7 @@ export const getAppVersionString = (): string => {
 export const envLog = {
   debug: (...args: any[]) => {
     if (config.logLevel === 'debug' && (isDevelopment() || featureFlags.debugMode)) {
-      console.log('[DEBUG]', ...args);
+      console.debug('[DEBUG]', ...args);
     }
   },
   info: (...args: any[]) => {

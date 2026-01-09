@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -31,6 +32,7 @@ interface RouteParams {
 }
 
 export default function ParentSettingsScreen({ onComplete }: ParentSettingsScreenProps) {
+  const navigation = useNavigation();
   const route = useRoute();
   const { kidData } = (route.params as RouteParams) || {};
   const { user, refreshProfile, legalAcceptance } = useAuth();
@@ -42,26 +44,22 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
 
   // Debug logging for input issues
   const handleParentNameChange = (text: string) => {
-    console.log('🔤 ParentName input change:', text);
+    logger.debug('🔤 ParentName input change:', text);
     setParentName(text);
   };
 
   const handleFamilyNameChange = (text: string) => {
-    console.log('🏠 FamilyName input change:', text);
+    logger.debug('🏠 FamilyName input change:', text);
     setFamilyName(text);
   };
-  const [safetyNotes, setSafetyNotes] = useState(true);
-  const [readAloud, setReadAloud] = useState(false);
-  const [autoSimplify, setAutoSimplify] = useState(true);
   const [showDifficulty, setShowDifficulty] = useState(true);
-  const [enableVoiceInstructions, setEnableVoiceInstructions] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    console.log('👨‍👩‍👧‍👦 ParentSettingsScreen mounted');
-    console.log('Input states:', { parentName, familyName });
+    logger.debug('👨‍👩‍👧‍👦 ParentSettingsScreen mounted');
+    logger.debug('Input states:', { parentName, familyName });
     return () => {
-      console.log('👨‍👩‍👧‍👦 ParentSettingsScreen unmounting');
+      logger.debug('👨‍👩‍👧‍👦 ParentSettingsScreen unmounting');
     };
   }, []);
 
@@ -74,8 +72,8 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
   }, [showForm]);
 
   const saveParentProfile = async (): Promise<boolean> => {
-    console.log('🔍 Form submission - Current state:', { parentName, familyName });
-    console.log('🔍 Trimmed values:', {
+    logger.debug('🔍 Form submission - Current state:', { parentName, familyName });
+    logger.debug('🔍 Trimmed values:', {
       parentNameTrimmed: parentName.trim(),
       familyNameTrimmed: familyName.trim(),
       parentNameLength: parentName.length,
@@ -83,7 +81,7 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
     });
 
     if (!parentName.trim() || !familyName.trim()) {
-      console.log('❌ Validation failed - missing required fields');
+      logger.debug('❌ Validation failed - missing required fields');
       Alert.alert('Missing Information', 'Please fill in all required fields.');
       return false;
     }
@@ -97,14 +95,14 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
 
     try {
       const userSettings: UserSettings = {
-        safetyNotes,
-        readAloud,
-        autoSimplify,
+        safetyNotes: true,              // Always on
+        readAloud: false,               // Coming soon
+        autoSimplify: true,             // Always automatic
         fontSize: 'medium',
         temperatureUnit: 'fahrenheit',
         language: 'en',
         showDifficulty,
-        enableVoiceInstructions,
+        enableVoiceInstructions: false, // Coming soon
         theme: 'light',
       };
 
@@ -113,14 +111,15 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
         parentName: parentName.trim(),
         email: user.email || '',
         settings: userSettings,
+        kidIds: [],
         termsAcceptedAt: legalAcceptance?.termsAcceptedAt || new Date(),
         privacyPolicyAcceptedAt: legalAcceptance?.privacyPolicyAcceptedAt || new Date(),
         coppaDisclosureAccepted: legalAcceptance?.coppaDisclosureAccepted ?? false,
         coppaConsentDate: legalAcceptance?.coppaDisclosureAccepted ? new Date() : undefined,
       };
 
-      console.log('📝 About to create parent profile with data:', profileData);
-      console.log('📝 User UID:', user.uid);
+      logger.debug('📝 About to create parent profile with data:', profileData);
+      logger.debug('📝 User UID:', user.uid);
 
       await parentProfileService.createParentProfile(user.uid, profileData);
       await refreshProfile();
@@ -212,8 +211,8 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
             placeholder="Enter your name"
             placeholderTextColor="#9ca3af"
             returnKeyType="next"
-            onFocus={() => console.log('👤 ParentName input focused')}
-            onBlur={() => console.log('👤 ParentName input blurred')}
+            onFocus={() => logger.debug('👤 ParentName input focused')}
+            onBlur={() => logger.debug('👤 ParentName input blurred')}
             autoCapitalize="words"
             autoCorrect={false}
             autoComplete="off"
@@ -234,8 +233,8 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
             placeholder="e.g., The Smith Family"
             placeholderTextColor="#9ca3af"
             returnKeyType="done"
-            onFocus={() => console.log('🏠 FamilyName input focused')}
-            onBlur={() => console.log('🏠 FamilyName input blurred')}
+            onFocus={() => logger.debug('🏠 FamilyName input focused')}
+            onBlur={() => logger.debug('🏠 FamilyName input blurred')}
             autoCapitalize="words"
             autoCorrect={false}
             autoComplete="off"
@@ -250,51 +249,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
         <View style={styles.settingsContainer}>
           <View style={styles.setting}>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Show Safety Notes</Text>
-              <Text style={styles.settingDescription}>
-                Highlight when adult help is needed
-              </Text>
-            </View>
-            <Switch
-              value={safetyNotes}
-              onValueChange={setSafetyNotes}
-              trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
-              thumbColor={safetyNotes ? '#2563eb' : '#f3f4f6'}
-            />
-          </View>
-
-          <View style={styles.setting}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Enable Read-Aloud Mode</Text>
-              <Text style={styles.settingDescription}>
-                Kids can hear instructions spoken out loud
-              </Text>
-            </View>
-            <Switch
-              value={readAloud}
-              onValueChange={setReadAloud}
-              trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
-              thumbColor={readAloud ? '#2563eb' : '#f3f4f6'}
-            />
-          </View>
-
-          <View style={styles.setting}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Simplify Recipes Automatically</Text>
-              <Text style={styles.settingDescription}>
-                Auto-convert all recipes to kid-friendly versions
-              </Text>
-            </View>
-            <Switch
-              value={autoSimplify}
-              onValueChange={setAutoSimplify}
-              trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
-              thumbColor={autoSimplify ? '#2563eb' : '#f3f4f6'}
-            />
-          </View>
-
-          <View style={styles.setting}>
-            <View style={styles.settingInfo}>
               <Text style={styles.settingTitle}>Show Difficulty Levels</Text>
               <Text style={styles.settingDescription}>
                 Display recipe difficulty ratings
@@ -305,21 +259,6 @@ export default function ParentSettingsScreen({ onComplete }: ParentSettingsScree
               onValueChange={setShowDifficulty}
               trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
               thumbColor={showDifficulty ? '#2563eb' : '#f3f4f6'}
-            />
-          </View>
-
-          <View style={styles.setting}>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingTitle}>Voice Instructions</Text>
-              <Text style={styles.settingDescription}>
-                Enable voice guidance for cooking steps
-              </Text>
-            </View>
-            <Switch
-              value={enableVoiceInstructions}
-              onValueChange={setEnableVoiceInstructions}
-              trackColor={{ false: '#e5e7eb', true: '#93c5fd' }}
-              thumbColor={enableVoiceInstructions ? '#2563eb' : '#f3f4f6'}
             />
           </View>
         </View>

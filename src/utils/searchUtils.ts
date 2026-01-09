@@ -221,24 +221,50 @@ export const filterRecipes = (recipes: Recipe[], filters: SearchFilters): Recipe
       return false;
     }
 
-    // Cook time filter - check cookTime first, then totalTime as fallback
+    // Cook time filter - prefer totalTime, calculate from parts if needed
     if (filters.maxCookTime) {
-      const timeStr = (recipe.cookTime || recipe.totalTime || '').toString();
-      if (timeStr) {
-        let cookTime: number;
+      let totalMinutes = 0;
 
-        // Parse time strings that might include units (e.g., "30 minutes", "1 hour")
-        if (timeStr.toLowerCase().includes('hour')) {
-          const hours = parseFloat(timeStr.replace(/[^\d.]/g, ''));
-          cookTime = hours * 60; // Convert to minutes
+      // First, try to use totalTime if it exists
+      const totalTimeStr = recipe.totalTime?.toString() || '';
+      if (totalTimeStr) {
+        // Parse totalTime
+        if (totalTimeStr.toLowerCase().includes('hour')) {
+          const hours = parseFloat(totalTimeStr.replace(/[^\d.]/g, ''));
+          totalMinutes = hours * 60;
         } else {
-          // Extract numbers from string, assume minutes if no unit specified
-          cookTime = parseFloat(timeStr.replace(/[^\d.]/g, '')) || 0;
+          totalMinutes = parseFloat(totalTimeStr.replace(/[^\d.]/g, '')) || 0;
+        }
+      } else {
+        // If no totalTime, calculate from prepTime + cookTime
+        const prepTimeStr = recipe.prepTime?.toString() || '';
+        const cookTimeStr = recipe.cookTime?.toString() || '';
+
+        let prepMinutes = 0;
+        let cookMinutes = 0;
+
+        if (prepTimeStr) {
+          if (prepTimeStr.toLowerCase().includes('hour')) {
+            prepMinutes = parseFloat(prepTimeStr.replace(/[^\d.]/g, '')) * 60;
+          } else {
+            prepMinutes = parseFloat(prepTimeStr.replace(/[^\d.]/g, '')) || 0;
+          }
         }
 
-        if (cookTime > filters.maxCookTime) {
-          return false;
+        if (cookTimeStr) {
+          if (cookTimeStr.toLowerCase().includes('hour')) {
+            cookMinutes = parseFloat(cookTimeStr.replace(/[^\d.]/g, '')) * 60;
+          } else {
+            cookMinutes = parseFloat(cookTimeStr.replace(/[^\d.]/g, '')) || 0;
+          }
         }
+
+        totalMinutes = prepMinutes + cookMinutes;
+      }
+
+      // Only filter out if we have a valid time and it exceeds the max
+      if (totalMinutes > 0 && totalMinutes > filters.maxCookTime) {
+        return false;
       }
     }
 

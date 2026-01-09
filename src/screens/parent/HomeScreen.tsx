@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,10 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  TextInput,
+  Alert,
+  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,8 +18,8 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { recipeService } from '../../services/recipes';
+import { recipeFavoritesService } from '../../services/recipeFavorites';
 import { useAuth } from '../../contexts/AuthContext';
-import { useImport } from '../../contexts/ImportContext';
 import { SkeletonRecipeList } from '../../components/SkeletonLoader';
 import { Toast } from '../../components/Toast';
 import { importProgressService } from '../../services/importProgressService';
@@ -23,36 +27,107 @@ import { SearchBar } from '../../components/SearchBar';
 import { searchRecipes, filterRecipes, SearchFilters } from '../../utils/searchUtils';
 import FilterChips, { FilterOption } from '../../components/FilterChips';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import type { KidRecipe, Recipe } from '../../types';
+import { useParentRecipes } from '../../hooks/useParentRecipes';
+import { useCollections } from '../../hooks/useCollections';
+import { collectionService } from '../../services/collections';
+import { queryClient, queryKeys } from '../../services/queryClient';
+import { SUBSCRIPTION_PLANS } from '../../config/plans';
+import type { Collection, KidRecipe, Recipe } from '../../types';
 
 export default function ParentHomeScreen() {
   const navigation = useNavigation();
-  const { user, parentProfile, kidProfiles, setDeviceMode } = useAuth();
+  const { user, parentProfile, kidProfiles, setDeviceMode, effectivePlan, subscription } = useAuth();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [filteredRecipes, setFilteredRecipes] = useState<Recipe[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
+  const [listView, setListView] = useState<'all' | 'favorites' | 'collections'>('all');
+  const [favoriteRecipeIds, setFavoriteRecipeIds] = useState<string[]>([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(false);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [collectionSearch, setCollectionSearch] = useState('');
+  const [createVisible, setCreateVisible] = useState(false);
+  const [collectionName, setCollectionName] = useState('');
+  const [collectionDescription, setCollectionDescription] = useState('');
+  const [collectionSaving, setCollectionSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const [toast, setToast] = useState<{ visible: boolean; message: string; type?: 'success' | 'info'; actionText?: string; onAction?: () => void }>({
     visible: false,
     message: '',
   });
   const [pendingRecipes, setPendingRecipes] = useState<KidRecipe[]>([]);
+  const parentId = parentProfile?.id ?? '';
+  const {
+    data: parentRecipesData = [],
+    isLoading: recipesLoading,
+  } = useParentRecipes(parentId);
+  const { data: collections = [], isLoading: collectionsLoading } = useCollections(parentId);
+
+  const maxCollections = useMemo(() => {
+    if (subscription?.isBetaTester) return 'unlimited';
+    return SUBSCRIPTION_PLANS[effectivePlan].limits.maxCollections;
+  }, [effectivePlan, subscription?.isBetaTester]);
+
+  const atCollectionLimit =
+    maxCollections !== 'unlimited' && collections.length >= maxCollections;
 
   useEffect(() => {
-    loadRecipes();
-  }, [user]);
+    setRecipes((prev) => {
+      if (prev.length === parentRecipesData.length && prev.every((item, index) => item.id === parentRecipesData[index]?.id)) {
+        return prev;
+      }
+      return parentRecipesData;
+    });
+  }, [parentRecipesData]);
 
-  // Refresh recipes when screen comes into focus (e.g., after importing a recipe)
-  // Use silent refresh to avoid showing notifications every time user navigates back
+  useEffect(() => {
+    if (listView !== 'favorites' || !parentId) return;
+    let isActive = true;
+    setFavoritesLoading(true);
+    recipeFavoritesService
+      .getFavoriteRecipes(parentId)
+      .then((ids) => {
+        if (isActive) setFavoriteRecipeIds(ids);
+      })
+      .catch((error) => {
+        console.error('Error loading favorites:', error);
+      })
+      .finally(() => {
+        if (isActive) setFavoritesLoading(false);
+      });
+    return () => {
+      isActive = false;
+    };
+  }, [listView, parentId]);
+
+  useEffect(() => {
+    if (listView !== 'collections') {
+      setSelectedCollectionId(null);
+      setCollectionSearch('');
+    }
+  }, [listView]);
+
   useFocusEffect(
     React.useCallback(() => {
-      if (user?.uid) {
-        loadRecipes(); // Silent load without notifications
-      }
-    }, [user?.uid])
+      if (!parentId) return;
+      refreshRecipes(false, false);
+    }, [parentId])
   );
+
+  useEffect(() => {
+    if (listView === 'favorites') {
+      fadeAnim.setValue(1);
+      return;
+    }
+    fadeAnim.setValue(0);
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 140,
+      useNativeDriver: true,
+    }).start();
+  }, [fadeAnim, listView, selectedCollectionId]);
 
   // Listen for import completions globally
   useEffect(() => {
@@ -60,7 +135,7 @@ export default function ParentHomeScreen() {
       onProgress: (event) => {
         if (event.type === 'complete' && event.recipe) {
           // Auto-refresh recipes when a new one is imported
-          loadRecipes(false); // Silent refresh, no loading state
+          refreshRecipes(false, false);
 
           // Show success notification
           setToast({
@@ -115,8 +190,26 @@ export default function ParentHomeScreen() {
   }, [parentProfile?.id]);
 
   // Handle search and filter combination
+  const baseRecipes = useMemo(() => {
+    let base = recipes;
+    if (listView === 'favorites') {
+      const favoriteSet = new Set(favoriteRecipeIds);
+      base = recipes.filter((recipe) => favoriteSet.has(recipe.id));
+    }
+    if (listView === 'collections' && selectedCollectionId) {
+      const collection = collections.find((item) => item.id === selectedCollectionId);
+      if (collection?.recipeIds?.length) {
+        const collectionSet = new Set(collection.recipeIds);
+        base = recipes.filter((recipe) => collectionSet.has(recipe.id));
+      } else {
+        base = [];
+      }
+    }
+    return base;
+  }, [recipes, listView, favoriteRecipeIds, selectedCollectionId, collections]);
+
   useEffect(() => {
-    let filtered = recipes;
+    let filtered = baseRecipes;
 
     // Apply search first
     if (searchQuery.trim() !== '') {
@@ -138,10 +231,13 @@ export default function ParentHomeScreen() {
     }
 
     setFilteredRecipes(filtered);
-  }, [searchQuery, recipes, activeFilters]);
+  }, [searchQuery, baseRecipes, activeFilters]);
 
   const handleSearch = (query: string) => {
     setSearchQuery(query);
+    if (query.trim().length > 0) {
+      setShowFilters(true);
+    }
   };
 
   // Define filter options for parent mode
@@ -162,19 +258,66 @@ export default function ParentHomeScreen() {
     );
   };
 
+  const openCreateCollection = () => {
+    if (atCollectionLimit) {
+      Alert.alert(
+        'Collection Limit Reached',
+        'Free users can create up to 5 collections. Upgrade to KidChef Plus for unlimited collections.',
+        [
+          { text: 'Not Now', style: 'cancel' },
+          { text: 'View Plans', onPress: () => navigation.navigate('Pricing' as never) },
+        ]
+      );
+      return;
+    }
+    setCollectionName('');
+    setCollectionDescription('');
+    setCreateVisible(true);
+  };
 
-  const loadRecipes = async (isRefresh = false, showNotification = true) => {
-    if (!user?.uid || !parentProfile?.id) return;
+  const handleCreateCollection = async () => {
+    if (!parentId) return;
+    const trimmed = collectionName.trim();
+    if (!trimmed) {
+      Alert.alert('Missing Name', 'Please name your collection.');
+      return;
+    }
+    try {
+      setCollectionSaving(true);
+      await collectionService.createCollection(parentId, trimmed, collectionDescription);
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections(parentId) });
+      setCreateVisible(false);
+    } catch (error) {
+      console.error('Failed to create collection:', error);
+      Alert.alert('Error', 'Unable to create collection. Please try again.');
+    } finally {
+      setCollectionSaving(false);
+    }
+  };
+
+  const selectedCollection = useMemo(() => {
+    if (!selectedCollectionId) return null;
+    return collections.find((item) => item.id === selectedCollectionId) || null;
+  }, [collections, selectedCollectionId]);
+
+  const filteredCollections = useMemo(() => {
+    if (!collectionSearch.trim()) return collections;
+    const query = collectionSearch.trim().toLowerCase();
+    return collections.filter((item) => item.name.toLowerCase().includes(query));
+  }, [collections, collectionSearch]);
+
+
+  const refreshRecipes = async (isRefresh = false, showNotification = true) => {
+    if (!user?.uid || !parentId) return;
 
     try {
       if (isRefresh) {
         setRefreshing(true);
-      } else if (showNotification) {
-        setLoading(true);
       }
 
       const previousRecipeCount = recipes.length;
-      const userRecipes = await recipeService.getUserRecipes(parentProfile.id, isRefresh);
+      const userRecipes = await recipeService.getUserRecipes(parentId, true);
+      queryClient.setQueryData(queryKeys.recipes(parentId), userRecipes);
 
       // Check if new recipes were added during a refresh (not initial load)
       if (isRefresh && showNotification && userRecipes.length > previousRecipeCount) {
@@ -186,21 +329,17 @@ export default function ParentHomeScreen() {
         });
       }
 
-      setRecipes(userRecipes);
-      setFilteredRecipes(userRecipes);
     } catch (error) {
       console.error('Error loading recipes:', error);
     } finally {
       if (isRefresh) {
         setRefreshing(false);
-      } else if (showNotification) {
-        setLoading(false);
       }
     }
   };
 
   const onRefresh = () => {
-    loadRecipes(true);
+    refreshRecipes(true);
   };
 
   const handleRecipePress = (recipe: Recipe) => {
@@ -269,7 +408,7 @@ export default function ParentHomeScreen() {
 
   return (
     <ErrorBoundary>
-      <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <Toast
         visible={toast.visible}
         message={toast.message}
@@ -279,30 +418,16 @@ export default function ParentHomeScreen() {
         onAction={toast.onAction}
       />
       <View style={styles.header}>
-        <View style={styles.titleSection}>
+        <View style={styles.titleRow}>
           <Text style={styles.title}>My Recipes</Text>
-          <Text style={styles.subtitle}>
-            {searchQuery || activeFilters.length > 0
-              ? `${filteredRecipes.length} of ${recipes.length} recipes`
-              : 'Your family recipe collection'}
-          </Text>
-          {!loading && !refreshing && !searchQuery && (
-            <Text style={styles.pullToRefreshHint}>Pull down to refresh</Text>
-          )}
-        </View>
-        <View style={styles.headerButtons}>
-          <TouchableOpacity
-            style={styles.favoritesButton}
-            onPress={() => navigation.navigate('Favorites' as never)}
-          >
-            <Text style={styles.favoritesButtonText}>❤️ Favorites</Text>
-          </TouchableOpacity>
           {kidProfiles.length > 0 && (
             <TouchableOpacity
-              style={styles.kidModeButton}
+              style={styles.kidModeIconButton}
               onPress={() => setDeviceMode('kid')}
+              accessibilityRole="button"
+              accessibilityLabel="Switch to Kid Mode"
             >
-              <Text style={styles.kidModeButtonText}>👶 Kid Mode</Text>
+              <Text style={styles.kidModeIcon}>👶</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -328,61 +453,240 @@ export default function ParentHomeScreen() {
         </TouchableOpacity>
       )}
 
-      {!loading && recipes.length > 0 && (
+      {!recipesLoading && recipes.length > 0 && (
         <View>
           <View style={styles.searchContainer}>
-            <SearchBar
-              placeholder="Search recipes, cuisine, ingredients..."
-              value={searchQuery}
-              onChangeText={handleSearch}
-            />
+            <View style={styles.searchBarWrap}>
+              <SearchBar
+                placeholder={
+                  listView === 'favorites'
+                    ? 'Search favorites...'
+                    : listView === 'collections' && !selectedCollectionId
+                      ? 'Search collections...'
+                      : 'Search recipes, ingredients...'
+                }
+                value={listView === 'collections' && !selectedCollectionId ? collectionSearch : searchQuery}
+                onChangeText={listView === 'collections' && !selectedCollectionId ? setCollectionSearch : handleSearch}
+              />
+            </View>
+            {listView !== 'collections' || selectedCollectionId ? (
+              <TouchableOpacity
+                style={styles.filterToggle}
+                onPress={() => setShowFilters((prev) => !prev)}
+              >
+                <Text style={styles.filterToggleText}>{showFilters ? 'Hide Filters' : 'Filters'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.filterSpacer} />
+            )}
           </View>
-          <FilterChips
-            filters={filterOptions}
-            activeFilters={activeFilters}
-            onFilterPress={handleFilterPress}
-            kidMode={false}
-          />
+          <View style={styles.segmentedRow}>
+            <TouchableOpacity
+              style={[styles.segmentButton, listView === 'all' && styles.segmentButtonActive]}
+              onPress={() => setListView('all')}
+            >
+              <Text style={[styles.segmentText, listView === 'all' && styles.segmentTextActive]}>All</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segmentButton, listView === 'favorites' && styles.segmentButtonActive]}
+              onPress={() => setListView('favorites')}
+            >
+              <Text style={[styles.segmentText, listView === 'favorites' && styles.segmentTextActive]}>❤️ Favorites</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segmentButton, listView === 'collections' && styles.segmentButtonActive]}
+              onPress={() => setListView('collections')}
+            >
+              <Text style={[styles.segmentText, listView === 'collections' && styles.segmentTextActive]}>📁 Collections</Text>
+            </TouchableOpacity>
+          </View>
+          {(listView !== 'collections' || selectedCollectionId) && (
+            <>
+              {(showFilters || activeFilters.length > 0 || searchQuery.trim().length > 0) && (
+                <FilterChips
+                  filters={filterOptions}
+                  activeFilters={activeFilters}
+                  onFilterPress={handleFilterPress}
+                  kidMode={false}
+                />
+              )}
+              {(activeFilters.length > 0 || searchQuery.trim().length > 0 || listView !== 'all') && (
+                <View style={styles.activeFilterRow}>
+                  <Text style={styles.activeFilterText}>
+                    Showing: {listView === 'all' ? 'All' : listView === 'favorites' ? 'Favorites' : selectedCollection?.name || 'Collections'}
+                    {searchQuery.trim().length > 0 ? ` · “${searchQuery.trim()}”` : ''}
+                    {activeFilters.length > 0 ? ` · ${activeFilters.length} filters` : ''}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setSearchQuery('');
+                      setActiveFilters([]);
+                      setShowFilters(false);
+                      setListView('all');
+                      setSelectedCollectionId(null);
+                    }}
+                  >
+                    <Text style={styles.clearFilterText}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
+          )}
         </View>
       )}
 
-      {loading ? (
-        <SkeletonRecipeList count={4} />
-      ) : recipes.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyEmoji}>📱</Text>
-          <Text style={styles.emptyTitle}>No recipes yet!</Text>
-          <Text style={styles.emptyText}>
-            Tap the Import tab to add your first recipe from any website
-          </Text>
-        </View>
-      ) : filteredRecipes.length === 0 && searchQuery ? (
-        <View style={styles.emptySearchState}>
-          <Text style={styles.emptySearchEmoji}>🔍</Text>
-          <Text style={styles.emptySearchTitle}>No recipes found</Text>
-          <Text style={styles.emptySearchText}>
-            Try adjusting your search term or browse all recipes
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filteredRecipes}
-          renderItem={renderRecipe}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.row}
-          contentContainerStyle={styles.list}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={['#2563eb']}
-              tintColor="#2563eb"
-              title="Pull to refresh recipes..."
+      <Animated.View style={[styles.contentFade, { opacity: fadeAnim }]}>
+        {recipesLoading ? (
+          <SkeletonRecipeList count={4} />
+        ) : listView === 'favorites' && favoritesLoading ? (
+          <View style={styles.inlineLoading}>
+            <ActivityIndicator size="small" color="#2563eb" />
+            <Text style={styles.inlineLoadingText}>Loading favorites...</Text>
+          </View>
+        ) : listView === 'collections' && !selectedCollectionId ? (
+          <View style={styles.collectionsWrapper}>
+            <View style={styles.collectionsHeader}>
+              <View />
+              <TouchableOpacity style={styles.createCollectionButton} onPress={openCreateCollection}>
+                <Text style={styles.createCollectionButtonText}>＋ New</Text>
+              </TouchableOpacity>
+            </View>
+            {maxCollections !== 'unlimited' && (
+              <Text style={styles.collectionLimitText}>
+                {collections.length}/{maxCollections} collections used
+              </Text>
+            )}
+            {collectionsLoading ? (
+              <Text style={styles.inlineLoadingText}>Loading collections...</Text>
+            ) : filteredCollections.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyEmoji}>📂</Text>
+                <Text style={styles.emptyTitle}>
+                  {collections.length === 0 ? 'No collections yet' : 'No matching collections'}
+                </Text>
+                <Text style={styles.emptyText}>
+                  {collections.length === 0 ? 'Create one to start organizing recipes.' : 'Try a different search.'}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredCollections}
+                keyExtractor={(item) => item.id}
+                contentContainerStyle={styles.collectionList}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.collectionCard}
+                    onPress={() => setSelectedCollectionId(item.id)}
+                  >
+                    <View style={styles.collectionCardHeader}>
+                      <Text style={styles.collectionName}>📁 {item.name}</Text>
+                      <Text style={styles.collectionCount}>{item.recipeIds?.length || 0}</Text>
+                    </View>
+                    {item.description ? (
+                      <Text style={styles.collectionDescription} numberOfLines={2}>
+                        {item.description}
+                      </Text>
+                    ) : (
+                      <Text style={styles.collectionDescriptionEmpty}>No description</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        ) : listView === 'favorites' && filteredRecipes.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyEmoji}>❤️</Text>
+            <Text style={styles.emptyTitle}>No favorites yet</Text>
+            <Text style={styles.emptyText}>Tap the heart on a recipe to save it here.</Text>
+          </View>
+        ) : listView === 'collections' && selectedCollectionId && filteredRecipes.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyEmoji}>📂</Text>
+            <Text style={styles.emptyTitle}>No recipes in this collection</Text>
+            <Text style={styles.emptyText}>Add recipes to see them here.</Text>
+          </View>
+        ) : recipes.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyEmoji}>📱</Text>
+            <Text style={styles.emptyTitle}>No recipes yet!</Text>
+            <Text style={styles.emptyText}>
+              Tap the Import tab to add your first recipe from any website
+            </Text>
+          </View>
+        ) : filteredRecipes.length === 0 && searchQuery ? (
+          <View style={styles.emptySearchState}>
+            <Text style={styles.emptySearchEmoji}>🔍</Text>
+            <Text style={styles.emptySearchTitle}>No recipes found</Text>
+            <Text style={styles.emptySearchText}>
+              Try adjusting your search term or browse all recipes
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.listWrapper}>
+            {listView === 'collections' && selectedCollection ? (
+              <View style={styles.collectionDetailHeader}>
+                <TouchableOpacity onPress={() => setSelectedCollectionId(null)}>
+                  <Text style={styles.collectionBackText}>‹ Collections</Text>
+                </TouchableOpacity>
+                <Text style={styles.collectionDetailTitle}>{selectedCollection.name}</Text>
+              </View>
+            ) : null}
+            <FlatList
+              data={filteredRecipes}
+              renderItem={renderRecipe}
+              keyExtractor={(item) => item.id}
+              numColumns={2}
+              columnWrapperStyle={styles.row}
+              contentContainerStyle={styles.list}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={['#2563eb']}
+                  tintColor="#2563eb"
+                  title="Pull to refresh recipes..."
+                />
+              }
             />
-          }
-        />
-      )}
+          </View>
+        )}
+      </Animated.View>
+
+      <Modal visible={createVisible} animationType="slide" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>New Collection</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Collection name"
+              value={collectionName}
+              onChangeText={setCollectionName}
+              maxLength={40}
+            />
+            <TextInput
+              style={[styles.input, styles.inputMultiline]}
+              placeholder="Description (optional)"
+              value={collectionDescription}
+              onChangeText={setCollectionDescription}
+              multiline
+              maxLength={120}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity onPress={() => setCreateVisible(false)}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleCreateCollection}
+                disabled={collectionSaving}
+              >
+                <Text style={styles.saveButtonText}>{collectionSaving ? 'Saving...' : 'Create'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
     </ErrorBoundary>
   );
@@ -397,31 +701,27 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 10,
   },
-  titleSection: {
-    alignItems: 'center',
-    marginBottom: 15,
-  },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#1f2937',
     marginBottom: 5,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  pullToRefreshHint: {
-    fontSize: 14,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
-  headerButtons: {
+  titleRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  kidModeIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
     justifyContent: 'center',
-    flexWrap: 'wrap',
-    gap: 10,
+  },
+  kidModeIcon: {
+    fontSize: 18,
   },
   pendingBanner: {
     marginHorizontal: 16,
@@ -458,44 +758,227 @@ const styles = StyleSheet.create({
     color: '#4f46e5',
     marginLeft: 8,
   },
-  favoritesButton: {
-    backgroundColor: '#ef4444',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    marginBottom: 6,
+    gap: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
   },
-  favoritesButtonText: {
-    color: 'white',
+  searchBarWrap: {
+    flex: 1,
+  },
+  filterToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: '#f3f4f6',
+  },
+  filterToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4b5563',
+  },
+  filterSpacer: {
+    width: 76,
+  },
+  segmentedRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    gap: 8,
+    backgroundColor: '#fff',
+  },
+  segmentButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+  },
+  segmentButtonActive: {
+    backgroundColor: '#111827',
+    borderColor: '#111827',
+  },
+  segmentText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  segmentTextActive: {
+    color: '#fff',
+  },
+  activeFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 6,
+    backgroundColor: '#fff',
+  },
+  activeFilterText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  clearFilterText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  contentFade: {
+    flex: 1,
+  },
+  inlineLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    gap: 8,
+  },
+  inlineLoadingText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  collectionsWrapper: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    flex: 1,
+  },
+  collectionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  createCollectionButton: {
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  createCollectionButtonText: {
+    color: '#374151',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  collectionLimitText: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 8,
+  },
+  collectionList: {
+    paddingBottom: 20,
+  },
+  collectionCard: {
+    backgroundColor: 'white',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  collectionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  collectionName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  collectionCount: {
+    backgroundColor: '#f3f4f6',
+    color: '#6b7280',
+    fontSize: 11,
+    fontWeight: '600',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  collectionDescription: {
+    marginTop: 6,
+    color: '#6b7280',
+    fontSize: 13,
+  },
+  collectionDescriptionEmpty: {
+    marginTop: 6,
+    color: '#9ca3af',
+    fontSize: 12,
+  },
+  listWrapper: {
+    flex: 1,
+  },
+  collectionDetailHeader: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  collectionBackText: {
+    color: '#2563eb',
     fontSize: 12,
     fontWeight: '600',
   },
-  searchContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 10,
+  collectionDetailTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 6,
   },
-  kidModeButton: {
-    backgroundColor: '#10b981',
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 12,
+    color: '#111827',
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    fontSize: 14,
+  },
+  inputMultiline: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cancelText: {
+    color: '#6b7280',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  saveButton: {
+    backgroundColor: '#2563eb',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
   },
-  kidModeButtonText: {
+  saveButtonText: {
     color: 'white',
     fontSize: 14,
     fontWeight: '600',

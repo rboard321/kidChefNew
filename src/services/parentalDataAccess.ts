@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -234,7 +235,7 @@ export const parentalDataAccessService: ParentalDataAccessService = {
         downloadUrl: `mock-download-url-${requestId}`,
       });
 
-      console.log('Data export processed for request:', requestId);
+      logger.debug('Data export processed for request:', requestId);
     } catch (error) {
       console.error('Error processing data export:', error);
       throw error;
@@ -319,7 +320,7 @@ export const parentalDataAccessService: ParentalDataAccessService = {
         completedAt: Timestamp.now(),
       });
 
-      console.log('Data deletion completed for request:', requestId);
+      logger.debug('Data deletion completed for request:', requestId);
     } catch (error) {
       console.error('Error processing data deletion:', error);
       throw error;

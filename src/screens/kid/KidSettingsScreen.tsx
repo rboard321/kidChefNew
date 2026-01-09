@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -153,7 +154,7 @@ export default function KidSettingsScreen() {
           <ActionButton
             title="My Cooking Progress"
             icon="📊"
-            onPress={() => console.log('Show progress')}
+            onPress={() => logger.debug('Show progress')}
           />
 
           <View style={styles.settingItem}>

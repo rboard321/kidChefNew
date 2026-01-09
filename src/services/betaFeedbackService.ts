@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import {
   collection,
   doc,
@@ -170,7 +171,7 @@ class BetaFeedbackManager implements BetaFeedbackService {
 
       // Also log as a structured event for analytics
       if (__DEV__) {
-        console.log('Beta feedback submitted:', {
+        logger.debug('Beta feedback submitted:', {
           feedbackId: docRef.id,
           type: feedback.feedbackType,
           category: feedback.category,

@@ -30,6 +30,16 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
   const [loading, setLoading] = useState(false);
   const { signUp, setLegalAcceptance } = useAuth();
 
+  const validatePassword = (value: string): string | null => {
+    if (value.length < 8) {
+      return 'Password must be at least 8 characters.';
+    }
+    if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+      return 'Password must include at least one letter and one number.';
+    }
+    return null;
+  };
+
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
@@ -41,8 +51,9 @@ export default function SignUpScreen({ onSwitchToSignIn }: SignUpScreenProps) {
       return;
     }
 
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      Alert.alert('Error', passwordError);
       return;
     }
 

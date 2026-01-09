@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -7,6 +8,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -18,7 +20,9 @@ import { recipeService } from '../../services/recipes';
 import { kidRecipeManagerService } from '../../services/kidRecipeManager';
 import { kidProgressService } from '../../services/kidProgressService';
 import { recipeFavoritesService } from '../../services/recipeFavorites';
+import { getStepExplanation } from '../../services/stepExplanationService';
 import { BadgeNotification } from '../../components/BadgeNotification';
+import FeaturePaywall from '../../components/FeaturePaywall';
 import PinInput from '../../components/PinInput';
 import { verifyPin } from '../../utils/pinSecurity';
 import type { KidRecipe, Recipe, KidBadge } from '../../types';
@@ -28,7 +32,7 @@ type RecipeViewParams = { recipeId?: string; kidRecipeId?: string; kidId?: strin
 export default function RecipeViewScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { currentKid, parentProfile } = useAuth();
+  const { currentKid, parentProfile, canAccessFeatureHelper } = useAuth();
   const { recipeId, kidRecipeId, kidId } = (route.params || {}) as RecipeViewParams;
   const [currentStep, setCurrentStep] = useState(0);
   const [parentRecipe, setParentRecipe] = useState<Recipe | null>(null);
@@ -44,6 +48,10 @@ export default function RecipeViewScreen() {
   const [pendingCompletion, setPendingCompletion] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
   const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [explainVisible, setExplainVisible] = useState(false);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainText, setExplainText] = useState('');
+  const [showExplainPaywall, setShowExplainPaywall] = useState(false);
 
   const effectiveKidId = kidId || currentKid?.id;
 
@@ -118,7 +126,7 @@ export default function RecipeViewScreen() {
       if (kidRecipeId && effectiveKidId) {
         try {
           setLoading(true);
-          console.log('📚 Loading kid recipe in kid mode:', kidRecipeId);
+          logger.debug('📚 Loading kid recipe in kid mode:', kidRecipeId);
 
           // Load the kid recipe directly
           const kidVersion = await kidRecipeManagerService.getKidRecipe(kidRecipeId);
@@ -135,7 +143,7 @@ export default function RecipeViewScreen() {
                 setParentRecipe(recipe);
               }
             } catch (parentRecipeError) {
-              console.log('ℹ️ Could not load parent recipe (expected in kid mode):', parentRecipeError?.code);
+              logger.debug('ℹ️ Could not load parent recipe (expected in kid mode):', parentRecipeError?.code);
               // Create a minimal parent recipe object with just the data we need
               setParentRecipe({
                 id: kidVersion.originalRecipeId,
@@ -150,7 +158,7 @@ export default function RecipeViewScreen() {
                 await loadFavoriteStatus(kidVersion.originalRecipeId, effectiveKidId);
               }
             } catch (favoriteError) {
-              console.log('ℹ️ Could not load favorite status (expected in kid mode):', favoriteError?.code);
+              logger.debug('ℹ️ Could not load favorite status (expected in kid mode):', favoriteError?.code);
             }
           }
         } catch (error) {
@@ -185,13 +193,13 @@ export default function RecipeViewScreen() {
           );
 
           if (!kidVersion) {
-            const newKidRecipeId = await kidRecipeManagerService.convertAndSaveRecipe(
+            const { kidRecipeId } = await kidRecipeManagerService.convertAndSaveRecipe(
               recipe,
               effectiveKidId,
               currentKid.readingLevel,
               currentKid.age
             );
-            kidVersion = await kidRecipeManagerService.getKidRecipe(newKidRecipeId);
+            kidVersion = await kidRecipeManagerService.getKidRecipe(kidRecipeId);
           }
 
           if (isMounted) {
@@ -231,7 +239,12 @@ export default function RecipeViewScreen() {
 
     try {
       setFavoriteLoading(true);
-      const newFavoriteStatus = await recipeFavoritesService.toggleFavorite(recipeId, parentProfile.id, effectiveKidId);
+      const targetRecipeId = recipeId || kidRecipe?.originalRecipeId || parentRecipe?.id;
+      if (!targetRecipeId) {
+        Alert.alert('Oops!', 'We could not find this recipe to favorite.');
+        return;
+      }
+      const newFavoriteStatus = await recipeFavoritesService.toggleFavorite(targetRecipeId, parentProfile.id, effectiveKidId);
       setIsFavorite(newFavoriteStatus);
     } catch (error) {
       console.error('Error toggling favorite:', error);
@@ -268,6 +281,29 @@ export default function RecipeViewScreen() {
         { text: "I Don't Understand", onPress: () => reportStep('confusing') }
       ]
     );
+  };
+
+  const handleExplainStep = async () => {
+    if (!kidRecipe) return;
+
+    if (!canAccessFeatureHelper('explain_step_ai')) {
+      setShowExplainPaywall(true);
+      return;
+    }
+
+    setExplainVisible(true);
+    setExplainLoading(true);
+    setExplainText('');
+
+    try {
+      const explanation = await getStepExplanation(kidRecipe.id, currentStep);
+      setExplainText(explanation);
+    } catch (error) {
+      console.error('Error explaining step:', error);
+      setExplainText('Sorry, we could not explain this step right now. Please try again.');
+    } finally {
+      setExplainLoading(false);
+    }
   };
 
   const reportStep = async (issue: string) => {
@@ -561,17 +597,31 @@ export default function RecipeViewScreen() {
                   <Text style={styles.encouragementText}>{steps[currentStep].encouragement}</Text>
                 ) : null}
 
-                <TouchableOpacity
-                  style={styles.helpButton}
-                  onPress={handleReportUnclearStep}
-                  disabled={reportingStep}
-                >
-                  {reportingStep ? (
-                    <ActivityIndicator size="small" color="#f59e0b" />
-                  ) : (
-                    <Text style={styles.helpButtonText}>🤔 Need Help?</Text>
-                  )}
-                </TouchableOpacity>
+                <View style={styles.stepActions}>
+                  <TouchableOpacity
+                    style={styles.explainButton}
+                    onPress={handleExplainStep}
+                    disabled={explainLoading}
+                  >
+                    {explainLoading ? (
+                      <ActivityIndicator size="small" color="#2563eb" />
+                    ) : (
+                      <Text style={styles.explainButtonText}>🔍 Explain This Step</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.helpButton}
+                    onPress={handleReportUnclearStep}
+                    disabled={reportingStep}
+                  >
+                    {reportingStep ? (
+                      <ActivityIndicator size="small" color="#f59e0b" />
+                    ) : (
+                      <Text style={styles.helpButtonText}>🤔 Need Help?</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
 
@@ -634,6 +684,46 @@ export default function RecipeViewScreen() {
         title="Parent Verification Required"
         subtitle="Enter your PIN to verify the recipe was completed"
         mode="input"
+      />
+
+      <Modal
+        visible={explainVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setExplainVisible(false)}
+      >
+        <View style={styles.explainOverlay}>
+          <View style={styles.explainContainer}>
+            <View style={styles.explainHeader}>
+              <Text style={styles.explainTitle}>Step Explanation</Text>
+              <TouchableOpacity onPress={() => setExplainVisible(false)}>
+                <Text style={styles.explainClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            {explainLoading ? (
+              <View style={styles.explainLoading}>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={styles.explainLoadingText}>Thinking...</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.explainBody}>
+                <Text style={styles.explainText}>{explainText}</Text>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <FeaturePaywall
+        feature="explain_step_ai"
+        featureName="Explain This Step"
+        description="Get kid‑friendly explanations for tricky steps with KidChef Plus."
+        visible={showExplainPaywall}
+        onClose={() => setShowExplainPaywall(false)}
+        onUpgrade={() => {
+          setShowExplainPaywall(false);
+          navigation.navigate('Pricing' as never);
+        }}
       />
     </SafeAreaView>
   );
@@ -758,6 +848,25 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#2563eb',
   },
+  stepActions: {
+    gap: 10,
+    marginTop: 12,
+  },
+  explainButton: {
+    backgroundColor: '#eff6ff',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2563eb',
+    alignSelf: 'center',
+  },
+  explainButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1e40af',
+    textAlign: 'center',
+  },
   stepText: {
     fontSize: 18,
     color: '#1e40af',
@@ -846,6 +955,50 @@ const styles = StyleSheet.create({
     color: '#92400e',
     fontWeight: '600',
     textAlign: 'center',
+  },
+  explainOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  explainContainer: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '70%',
+  },
+  explainHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  explainTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e40af',
+  },
+  explainClose: {
+    fontSize: 20,
+    color: '#64748b',
+    padding: 6,
+  },
+  explainLoading: {
+    alignItems: 'center',
+    paddingVertical: 24,
+  },
+  explainLoadingText: {
+    marginTop: 8,
+    color: '#475569',
+  },
+  explainBody: {
+    maxHeight: 360,
+  },
+  explainText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#0f172a',
   },
   loadingContainer: {
     flex: 1,

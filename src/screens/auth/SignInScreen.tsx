@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { logger } from '../../utils/logger';
 import {
   View,
   Text,
@@ -93,17 +94,17 @@ export default function SignInScreen({ onSwitchToSignUp }: SignInScreenProps) {
 
     try {
       setLoading(true);
-      console.log('🔄 Starting resend email verification for:', email);
+      logger.debug('🔄 Starting resend email verification for:', email);
 
       // Sign in temporarily to get user object for verification email
       const user = await authService.signIn(email, password);
-      console.log('✅ Successfully signed in for email verification resend');
+      logger.debug('✅ Successfully signed in for email verification resend');
 
       await authService.sendEmailVerification(user);
-      console.log('✅ Email verification resend completed');
+      logger.debug('✅ Email verification resend completed');
 
       await authService.signOut(); // Sign out immediately
-      console.log('✅ User signed out after email verification resend');
+      logger.debug('✅ User signed out after email verification resend');
 
       Alert.alert(
         'Verification Email Sent',

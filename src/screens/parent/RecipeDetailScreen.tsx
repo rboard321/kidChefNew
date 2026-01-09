@@ -8,16 +8,27 @@ import {
   Alert,
   ActivityIndicator,
   Modal,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { recipeService } from '../../services/recipes';
 import { recipeSharingService } from '../../services/recipeSharing';
 import { kidRecipeManagerService } from '../../services/kidRecipeManager';
+import { recipeFavoritesService } from '../../services/recipeFavorites';
+import { collectionService } from '../../services/collections';
+import { queryKeys } from '../../services/queryClient';
+import { useCollections } from '../../hooks/useCollections';
+import { canConvertRecipe, incrementConversionCount } from '../../services/usageTracking';
 import { useAuth } from '../../contexts/AuthContext';
 import RecipeSourceLink from '../../components/RecipeSourceLink';
+import { SUBSCRIPTION_PLANS } from '../../config/plans';
 import type { Ingredient, Recipe } from '../../types';
+import { getParentStepExplanation } from '../../services/parentStepExplanationService';
+import FeaturePaywall from '../../components/FeaturePaywall';
 
 type RouteParams = { recipeId: string };
 
@@ -25,7 +36,8 @@ export default function RecipeDetailScreen() {
   const route = useRoute();
   const { recipeId } = (route.params || {}) as RouteParams;
   const navigation = useNavigation();
-  const { kidProfiles, parentProfile } = useAuth();
+  const queryClient = useQueryClient();
+  const { kidProfiles, parentProfile, subscription, canAccessFeatureHelper } = useAuth();
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [loading, setLoading] = useState(true);
   const [servings, setServings] = useState(1);
@@ -33,6 +45,27 @@ export default function RecipeDetailScreen() {
   const [selectedKidIds, setSelectedKidIds] = useState<string[]>([]);
   const [shareSaving, setShareSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [collectionModalVisible, setCollectionModalVisible] = useState(false);
+  const [collectionSelections, setCollectionSelections] = useState<string[]>([]);
+  const [collectionSaving, setCollectionSaving] = useState(false);
+  const [createCollectionVisible, setCreateCollectionVisible] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState('');
+  const [newCollectionDescription, setNewCollectionDescription] = useState('');
+  const [explainModalVisible, setExplainModalVisible] = useState(false);
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [explainText, setExplainText] = useState('');
+  const [currentExplainStep, setCurrentExplainStep] = useState<{ index: number; text: string } | null>(null);
+  const [showExplainPaywall, setShowExplainPaywall] = useState(false);
+  const parentId = parentProfile?.id ?? '';
+  const { data: collections = [] } = useCollections(parentId);
+
+  const maxCollections = subscription?.isBetaTester
+    ? 'unlimited'
+    : SUBSCRIPTION_PLANS[subscription?.plan || 'free'].limits.maxCollections;
+  const atCollectionLimit =
+    maxCollections !== 'unlimited' && collections.length >= maxCollections;
 
   useEffect(() => {
     let isMounted = true;
@@ -62,6 +95,32 @@ export default function RecipeDetailScreen() {
       isMounted = false;
     };
   }, [recipeId]);
+
+  useEffect(() => {
+    const checkFavoriteStatus = async () => {
+      if (!recipeId || !parentProfile?.id) return;
+
+      try {
+        const favoriteStatus = await recipeFavoritesService.isFavorite(
+          recipeId,
+          parentProfile.id
+        );
+        setIsFavorite(favoriteStatus);
+      } catch (error) {
+        console.error('Failed to check favorite status:', error);
+      }
+    };
+
+    checkFavoriteStatus();
+  }, [recipeId, parentProfile?.id]);
+
+  useEffect(() => {
+    if (!collectionModalVisible || !recipeId) return;
+    const selected = collections
+      .filter((collection) => collection.recipeIds?.includes(recipeId))
+      .map((collection) => collection.id);
+    setCollectionSelections(selected);
+  }, [collectionModalVisible, collections, recipeId]);
 
   const scaleIngredient = (ingredient: string, scale: number) => {
     const match = ingredient.match(/^([\d\.\s\/]+)\s+(.+)/);
@@ -95,6 +154,23 @@ export default function RecipeDetailScreen() {
 
   const handleShareAllKids = async () => {
     if (!recipeId || !parentProfile?.id || !recipe) return;
+
+    // Check monthly AI conversion limit
+    const conversionCheck = await canConvertRecipe(parentProfile.id, subscription);
+    const conversionsNeeded = kidProfiles.length;
+
+    if (!conversionCheck.allowed ||
+        (conversionCheck.limit !== 'unlimited' &&
+         typeof conversionCheck.remaining === 'number' &&
+         conversionCheck.remaining < conversionsNeeded)) {
+      Alert.alert(
+        'AI Conversion Limit Reached',
+        `You've shared ${conversionCheck.current} recipes with kids this month. Upgrade to KidChef Plus for unlimited kid-friendly recipes.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       setShareSaving(true);
 
@@ -105,7 +181,11 @@ export default function RecipeDetailScreen() {
       kidProfiles.forEach((kid) => {
         kidRecipeManagerService.convertAndSaveRecipe(
           recipe, kid.id, kid.readingLevel, kid.age
-        ).catch(error => {
+        ).then(({ conversionSource }) => {
+          if (conversionSource === 'ai') {
+            incrementConversionCount(parentProfile.id);
+          }
+        }).catch(error => {
           console.error(`Conversion failed for kid ${kid.id}:`, error);
         });
       });
@@ -127,6 +207,23 @@ export default function RecipeDetailScreen() {
 
   const handleShareSelectedKids = async () => {
     if (!recipeId || !parentProfile?.id || !selectedKidIds.length || !recipe) return;
+
+    // Check monthly AI conversion limit
+    const conversionCheck = await canConvertRecipe(parentProfile.id, subscription);
+    const conversionsNeeded = selectedKidIds.length;
+
+    if (!conversionCheck.allowed ||
+        (conversionCheck.limit !== 'unlimited' &&
+         typeof conversionCheck.remaining === 'number' &&
+         conversionCheck.remaining < conversionsNeeded)) {
+      Alert.alert(
+        'AI Conversion Limit Reached',
+        `You've shared ${conversionCheck.current} recipes with kids this month. Upgrade to KidChef Plus for unlimited kid-friendly recipes.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       setShareSaving(true);
 
@@ -143,7 +240,11 @@ export default function RecipeDetailScreen() {
         if (kid) {
           kidRecipeManagerService.convertAndSaveRecipe(
             recipe, kid.id, kid.readingLevel, kid.age
-          ).catch(error => {
+          ).then(({ conversionSource }) => {
+            if (conversionSource === 'ai') {
+              incrementConversionCount(parentProfile.id);
+            }
+          }).catch(error => {
             console.error(`Conversion failed for kid ${kidId}:`, error);
           });
         }
@@ -167,6 +268,111 @@ export default function RecipeDetailScreen() {
   const handleEdit = () => {
     if (!recipeId) return;
     navigation.navigate('RecipeEdit' as never, { recipeId } as never);
+  };
+
+  const handleToggleFavorite = async () => {
+    if (!recipeId || !parentProfile?.id || favoriteLoading) return;
+
+    try {
+      setFavoriteLoading(true);
+      const newFavoriteStatus = await recipeFavoritesService.toggleFavorite(
+        recipeId,
+        parentProfile.id
+      );
+      setIsFavorite(newFavoriteStatus);
+
+      Alert.alert(
+        newFavoriteStatus ? 'Added to Favorites' : 'Removed from Favorites',
+        newFavoriteStatus
+          ? 'This recipe has been added to your favorites.'
+          : 'This recipe has been removed from your favorites.'
+      );
+    } catch (error) {
+      console.error('Failed to toggle favorite:', error);
+      Alert.alert('Error', 'Failed to update favorite status. Please try again.');
+    } finally {
+      setFavoriteLoading(false);
+    }
+  };
+
+  const handleExplainStep = async (stepIndex: number, stepText: string) => {
+    if (!recipe?.id) return;
+
+    // Check feature access
+    if (!canAccessFeatureHelper('explain_parent_step_ai')) {
+      setShowExplainPaywall(true);
+      return;
+    }
+
+    // Open modal and start loading
+    setCurrentExplainStep({ index: stepIndex, text: stepText });
+    setExplainModalVisible(true);
+    setExplainLoading(true);
+    setExplainText('');
+
+    try {
+      const explanation = await getParentStepExplanation(recipe.id, stepIndex, stepText);
+      setExplainText(explanation);
+    } catch (error) {
+      console.error('Error explaining step:', error);
+      setExplainText('Sorry, we could not explain this step right now. Please try again.');
+    } finally {
+      setExplainLoading(false);
+    }
+  };
+
+  const toggleCollectionSelection = (collectionId: string) => {
+    setCollectionSelections((prev) =>
+      prev.includes(collectionId) ? prev.filter((id) => id !== collectionId) : [...prev, collectionId]
+    );
+  };
+
+  const handleSaveCollections = async () => {
+    if (!recipeId) return;
+    try {
+      setCollectionSaving(true);
+      const updates = collections.map(async (collection) => {
+        const currentlyHas = collection.recipeIds?.includes(recipeId);
+        const shouldHave = collectionSelections.includes(collection.id);
+        if (shouldHave && !currentlyHas) {
+          await collectionService.addRecipeToCollection(collection.id, recipeId);
+        }
+        if (!shouldHave && currentlyHas) {
+          await collectionService.removeRecipeFromCollection(collection.id, recipeId);
+        }
+      });
+      await Promise.all(updates);
+      setCollectionModalVisible(false);
+    } catch (error) {
+      console.error('Failed to update collections:', error);
+      Alert.alert('Error', 'Unable to update collections. Please try again.');
+    } finally {
+      setCollectionSaving(false);
+    }
+  };
+
+  const handleCreateCollection = async () => {
+    if (!parentId) return;
+    const trimmed = newCollectionName.trim();
+    if (!trimmed) {
+      Alert.alert('Missing Name', 'Please name your collection.');
+      return;
+    }
+    try {
+      setCollectionSaving(true);
+      const newId = await collectionService.createCollection(parentId, trimmed, newCollectionDescription);
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections(parentId) });
+      setCollectionSelections((prev) => [...prev, newId]);
+      setCreateCollectionVisible(false);
+      setCollectionModalVisible(true);
+      setNewCollectionName('');
+      setNewCollectionDescription('');
+    } catch (error) {
+      console.error('Failed to create collection:', error);
+      Alert.alert('Error', 'Unable to create collection. Please try again.');
+    } finally {
+      setCollectionSaving(false);
+    }
   };
 
   const handleDelete = () => {
@@ -302,8 +508,17 @@ export default function RecipeDetailScreen() {
             <Text style={styles.sectionTitle}>Instructions</Text>
             {displaySteps.map((instruction, index) => (
               <View key={index} style={styles.instructionItem}>
-                <View style={styles.stepNumber}>
-                  <Text style={styles.stepNumberText}>{index + 1}</Text>
+                <View style={styles.stepNumberContainer}>
+                  <View style={styles.stepNumber}>
+                    <Text style={styles.stepNumberText}>{index + 1}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.helpIcon}
+                    onPress={() => handleExplainStep(index, instruction)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Ionicons name="information-circle-outline" size={18} color="#6b7280" />
+                  </TouchableOpacity>
                 </View>
                 <Text style={styles.instructionText}>{instruction}</Text>
               </View>
@@ -313,6 +528,29 @@ export default function RecipeDetailScreen() {
           <View style={styles.actions}>
             <TouchableOpacity style={styles.primaryButton} onPress={handleShareWithKids}>
               <Text style={styles.primaryButtonText}>👨‍👩‍👧‍👦 Share with Kids</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.secondaryButton, styles.favoriteButton]}
+              onPress={handleToggleFavorite}
+              disabled={favoriteLoading}
+            >
+              <Ionicons
+                name={isFavorite ? 'heart' : 'heart-outline'}
+                size={20}
+                color={isFavorite ? '#ef4444' : '#6b7280'}
+              />
+              <Text style={[styles.secondaryButtonText, isFavorite && styles.favoriteButtonTextActive]}>
+                {isFavorite ? 'Favorited' : 'Add to Favorites'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.secondaryButton, styles.collectionButton]}
+              onPress={() => setCollectionModalVisible(true)}
+            >
+              <Ionicons name="folder-outline" size={20} color="#4f46e5" />
+              <Text style={styles.secondaryButtonText}>Add to Collection</Text>
             </TouchableOpacity>
 
             <View style={styles.secondaryActions}>
@@ -387,6 +625,176 @@ export default function RecipeDetailScreen() {
               </View>
             </View>
           </Modal>
+          <Modal
+            visible={collectionModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setCollectionModalVisible(false)}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Add to Collection</Text>
+                <ScrollView style={styles.kidList}>
+                  {collections.map((collection) => {
+                    const selected = collectionSelections.includes(collection.id);
+                    return (
+                      <TouchableOpacity
+                        key={collection.id}
+                        style={styles.kidRow}
+                        onPress={() => toggleCollectionSelection(collection.id)}
+                      >
+                        <Text style={styles.kidAvatar}>{selected ? '✅' : '📂'}</Text>
+                        <View style={styles.kidInfo}>
+                          <Text style={styles.kidName}>{collection.name}</Text>
+                          <Text style={styles.kidDetails}>
+                            {(collection.recipeIds?.length || 0)} recipes
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.modalIconButton}
+                    onPress={() => {
+                      if (atCollectionLimit) {
+                        Alert.alert(
+                          'Collection Limit Reached',
+                          'Free users can create up to 5 collections. Upgrade to KidChef Plus for unlimited collections.',
+                          [
+                            { text: 'Not Now', style: 'cancel' },
+                            { text: 'View Plans', onPress: () => navigation.navigate('Pricing') },
+                          ]
+                        );
+                        return;
+                      }
+                      setCollectionModalVisible(false);
+                      setCreateCollectionVisible(true);
+                    }}
+                  >
+                    <Text style={styles.modalIconButtonText}>＋</Text>
+                  </TouchableOpacity>
+                  <View style={styles.modalActionCenter}>
+                    <TouchableOpacity
+                      style={styles.modalPrimaryButtonSoft}
+                      onPress={handleSaveCollections}
+                      disabled={collectionSaving}
+                    >
+                      <Text style={styles.modalPrimaryButtonSoftText}>
+                        {collectionSaving ? 'Saving...' : 'Save'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.modalCancelButton}
+                    onPress={() => setCollectionModalVisible(false)}
+                  >
+                    <Text style={styles.modalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal
+            visible={createCollectionVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => {
+              setCreateCollectionVisible(false);
+              setCollectionModalVisible(true);
+            }}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalCard}>
+                <Text style={styles.modalTitle}>New Collection</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Collection name"
+                  value={newCollectionName}
+                  onChangeText={setNewCollectionName}
+                  maxLength={40}
+                />
+                <TextInput
+                  style={[styles.modalInput, styles.modalInputMultiline]}
+                  placeholder="Description (optional)"
+                  value={newCollectionDescription}
+                  onChangeText={setNewCollectionDescription}
+                  multiline
+                  maxLength={120}
+                />
+                <View style={styles.modalActions}>
+                  <View style={styles.modalActionCenter}>
+                    <TouchableOpacity
+                      style={styles.modalPrimaryButtonSoft}
+                      onPress={handleCreateCollection}
+                      disabled={collectionSaving}
+                    >
+                      <Text style={styles.modalPrimaryButtonSoftText}>
+                        {collectionSaving ? 'Saving...' : 'Create'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.modalCancelButton}
+                    onPress={() => {
+                      setCreateCollectionVisible(false);
+                      setCollectionModalVisible(true);
+                    }}
+                  >
+                    <Text style={styles.modalCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+
+          {/* Step Explanation Modal */}
+          <Modal
+            visible={explainModalVisible}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setExplainModalVisible(false)}
+          >
+            <View style={styles.explainOverlay}>
+              <View style={styles.explainContainer}>
+                <View style={styles.explainHeader}>
+                  <Text style={styles.explainTitle}>
+                    Step {currentExplainStep ? currentExplainStep.index + 1 : ''} Explanation
+                  </Text>
+                  <TouchableOpacity onPress={() => setExplainModalVisible(false)}>
+                    <Ionicons name="close" size={24} color="#64748b" />
+                  </TouchableOpacity>
+                </View>
+                {explainLoading ? (
+                  <View style={styles.explainLoading}>
+                    <ActivityIndicator size="large" color="#2563eb" />
+                    <Text style={styles.explainLoadingText}>Getting explanation...</Text>
+                  </View>
+                ) : (
+                  <ScrollView style={styles.explainBody}>
+                    <Text style={styles.explainStepText}>{currentExplainStep?.text}</Text>
+                    <View style={styles.explainDivider} />
+                    <Text style={styles.explainText}>{explainText}</Text>
+                  </ScrollView>
+                )}
+              </View>
+            </View>
+          </Modal>
+
+          {/* Feature Paywall */}
+          <FeaturePaywall
+            feature="explain_parent_step_ai"
+            featureName="Step Explanations"
+            description="Get detailed explanations for any cooking step with KidChef Plus."
+            visible={showExplainPaywall}
+            onClose={() => setShowExplainPaywall(false)}
+            onUpgrade={() => {
+              setShowExplainPaywall(false);
+              navigation.navigate('Pricing' as never);
+            }}
+          />
         </ScrollView>
       )}
     </SafeAreaView>
@@ -570,15 +978,17 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   primaryButton: {
-    backgroundColor: '#2563eb',
+    backgroundColor: '#e2e8f0',
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderRadius: 12,
     alignItems: 'center',
     marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#cbd5f5',
   },
   primaryButtonText: {
-    color: 'white',
+    color: '#1e293b',
     fontSize: 18,
     fontWeight: '600',
   },
@@ -588,12 +998,26 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: '#f8fafc',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
     alignItems: 'center',
     borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  favoriteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 15,
+    flex: undefined,
+  },
+  collectionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 15,
     borderColor: '#e5e7eb',
   },
   deleteButton: {
@@ -602,7 +1026,11 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#6b7280',
+    color: '#374151',
+  },
+  favoriteButtonTextActive: {
+    color: '#ef4444',
+    fontWeight: '600',
   },
   deleteButtonText: {
     color: '#ef4444',
@@ -625,6 +1053,18 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     textAlign: 'center',
   },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  modalInputMultiline: {
+    height: 80,
+    textAlignVertical: 'top',
+  },
   modalSubTitle: {
     fontSize: 14,
     fontWeight: '600',
@@ -635,6 +1075,7 @@ const styles = StyleSheet.create({
   modalPrimaryButton: {
     backgroundColor: '#2563eb',
     paddingVertical: 12,
+    paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
   },
@@ -643,6 +1084,18 @@ const styles = StyleSheet.create({
   },
   modalPrimaryButtonText: {
     color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalPrimaryButtonSoft: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modalPrimaryButtonSoftText: {
+    color: '#111827',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -683,6 +1136,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 16,
+    alignItems: 'center',
+  },
+  modalIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  modalIconButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  modalCancelButton: {
+    marginLeft: 'auto',
+  },
+  modalActionCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
   shareStatus: {
     flexDirection: 'row',
@@ -702,10 +1178,77 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e5e7eb',
     alignItems: 'center',
+    backgroundColor: '#f8fafc',
   },
   modalSecondaryButtonText: {
     fontSize: 15,
     fontWeight: '600',
     color: '#6b7280',
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  stepNumberContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  helpIcon: {
+    marginLeft: 4,
+    padding: 4,
+  },
+  explainOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'flex-end',
+  },
+  explainContainer: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    maxHeight: '75%',
+  },
+  explainHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  explainTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  explainLoading: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  explainLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  explainBody: {
+    maxHeight: 400,
+  },
+  explainStepText: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#4b5563',
+    fontStyle: 'italic',
+    marginBottom: 8,
+  },
+  explainDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginVertical: 12,
+  },
+  explainText: {
+    fontSize: 15,
+    lineHeight: 24,
+    color: '#1f2937',
   },
 });
