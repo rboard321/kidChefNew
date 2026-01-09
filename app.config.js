@@ -10,7 +10,7 @@ const getAppName = () => {
 
 const getBundleIdentifier = () => {
   if (IS_DEV) return 'com.kidchef.app.dev';
-  if (IS_STAGING) return 'com.kidchef.app.staging';
+  if (IS_STAGING) return 'com.kidchef.app.staging3';
   return 'com.kidchef.app';
 };
 
@@ -80,6 +80,7 @@ export default {
       // Environment information accessible in the app
       environment: process.env.EXPO_PUBLIC_ENVIRONMENT || 'development',
       appVariant: process.env.EXPO_PUBLIC_APP_VARIANT || 'dev',
+      appGroupId: process.env.EXPO_PUBLIC_APP_GROUP_ID || `group.${getBundleIdentifier()}`,
       buildTime: new Date().toISOString(),
     },
     updates: {

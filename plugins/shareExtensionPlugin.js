@@ -10,14 +10,23 @@ const withShareExtension = (config) => {
     // Get bundle identifier from config
     const bundleIdentifier = config.ios?.bundleIdentifier || 'com.kidchef.app';
     const appScheme = config.scheme || 'kidchef';
+    const appGroupId = config.extra?.appGroupId || `group.${bundleIdentifier}`;
 
     const ensureFile = (filePath, contents) => {
-      if (fs.existsSync(filePath)) {
+      if (!fs.existsSync(filePath)) {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, contents);
         return;
       }
+    };
 
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, contents);
+    const ensureFileContains = (filePath, replacer) => {
+      if (!fs.existsSync(filePath)) return;
+      const existing = fs.readFileSync(filePath, 'utf8');
+      const updated = replacer(existing);
+      if (updated !== existing) {
+        fs.writeFileSync(filePath, updated);
+      }
     };
 
     try {
@@ -199,7 +208,7 @@ const withShareExtension = (config) => {
   <key>FunctionRegion</key>
   <string>us-central1</string>
   <key>AppGroupId</key>
-  <string>group.com.kidchef.app</string>
+  <string>${appGroupId}</string>
   <key>CFBundlePackageType</key>
   <string>XPC!</string>
   <key>HostAppScheme</key>
@@ -234,7 +243,7 @@ const withShareExtension = (config) => {
   <dict>
     <key>com.apple.security.application-groups</key>
     <array>
-      <string>group.com.kidchef.app</string>
+      <string>${appGroupId}</string>
     </array>
   </dict>
 </plist>
@@ -252,7 +261,7 @@ const withShareExtension = (config) => {
 
 RCT_EXPORT_MODULE(SharedAuthToken);
 
-static NSString *const kKidChefAppGroupId = @"group.com.kidchef.app";
+static NSString *const kKidChefAppGroupId = @"${appGroupId}";
 static NSString *const kKidChefTokenKey = @"kidchef.firebaseIdToken";
 
 RCT_EXPORT_METHOD(setToken:(NSString *)token)
@@ -269,6 +278,17 @@ RCT_EXPORT_METHOD(clearToken)
 
 @end
 `);
+
+      // Update existing files to current app group id
+      ensureFileContains(plistFile, (contents) =>
+        contents.replace(/<key>AppGroupId<\/key>\s*<string>[^<]*<\/string>/, `<key>AppGroupId</key>\n  <string>${appGroupId}</string>`)
+      );
+      ensureFileContains(entitlementsFile, (contents) =>
+        contents.replace(/<string>group\.[^<]*<\/string>/, `<string>${appGroupId}</string>`)
+      );
+      ensureFileContains(sharedAuthImplFile, (contents) =>
+        contents.replace(/static NSString \*const kKidChefAppGroupId = @"[^"]+";/, `static NSString *const kKidChefAppGroupId = @"${appGroupId}";`)
+      );
 
       ensureFile(swiftFile, String.raw`import UIKit
 import UniformTypeIdentifiers
